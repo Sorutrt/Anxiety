@@ -34,6 +34,10 @@ botの許可設定はこんな感じ
     - Connect
     - Speak
 
+Privileged Gateway Intents で以下を有効化してください
+- MESSAGE CONTENT INTENT
+- SERVER MEMBERS INTENT
+
 できたURLにアクセスし、サーバーに招待する
 
 ### 2. ローカルで動作させる
@@ -42,6 +46,8 @@ botの許可設定はこんな感じ
 git clone https://github.com/Sorutrt/ReadDiscordByA.I.VOICE.git
 ```
 `.env.example`を指定のとおりに書き換え、`.env`にリネームしてください  
+`GEMINI_API_KEY` と `KOTOBA_WHISPER_BIN` も設定してください  
+`KOTOBA_WHISPER_BIN` の例: `.\tools\kotoba-whisper\kotoba-whisper.cmd`
 
 npmパッケージをインストールします
 ```
@@ -67,6 +73,10 @@ cd ..\..
 ```
 New-Item -ItemType Directory -Path voice
 ```
+
+`kotoba-whisper` CLI は `tools/kotoba-whisper/` を参照してください。
+`uv sync --project .\tools\kotoba-whisper` を実行して依存を用意します。
+キャラクター定義は `data/characters.json` を編集してください。
 
 `opusscript` が無いと音声再生で落ちるため、入れておきます。
 ```
@@ -109,7 +119,15 @@ node .\dist\main.js
 
 ## 🔊 使い方
 `/join`でユーザーのVCに入ります  
-あとは読み上げてほしい文章を打つだけ
+`/leave` でVCから退出します  
+`/vc start` でVC会話を開始します  
+`/vc stop` で会話を停止します  
+`/skip` で再生中の音声をスキップします  
+`/reset` で会話履歴をクリアします  
+`/set character <id|name>` で話者を切り替えます  
+`/set debug_channel <#channel>` でデバッグログを出力します  
+`/debug on|off` / `/debug level <0|1|2>` でログ量を調整します  
+テキスト読み上げは従来通りメッセージ送信で行えます
 
 ## 🧱 開発メモ 
 ### コンパイル等(npm-scriptsがうまくいかない時用)
@@ -125,3 +143,4 @@ npx tsx .\src\main.ts
 
 ## その他 
 質問などあればIssuesに投げてください
+

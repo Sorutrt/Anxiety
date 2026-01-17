@@ -4,6 +4,18 @@
 ### unique files ###
 voice/*
 
+### kotoba-whisper ###
+tools/kotoba-whisper/*.exe
+tools/kotoba-whisper/*.dll
+tools/kotoba-whisper/*.pyd
+tools/kotoba-whisper/.venv/
+tools/kotoba-whisper/cache/
+tools/kotoba-whisper/.cache/
+tools/kotoba-whisper/__pycache__/
+
+### jj ###
+jj/*
+
 ### Node ###
 # Logs
 logs
@@ -143,6 +155,9 @@ dist
 
 # SvelteKit build / generate output
 .svelte-kit
+
+### python ###
+build/config.gypi
 
 ### VisualStudioCode ###
 .vscode/*

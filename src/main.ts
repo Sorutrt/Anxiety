@@ -1,12 +1,30 @@
 //必要なパッケージをインポートする
-import { GatewayIntentBits, Client, Partials, Message, Events, CacheType, Interaction } from "discord.js";
+import {
+  GatewayIntentBits,
+  Client,
+  Partials,
+  Message,
+  Events,
+  CacheType,
+  Interaction,
+} from "discord.js";
 import dotenv from "dotenv";
 import { joinCommandData, joinVC } from "./commands/join";
+import { leaveCommandData, leaveVC } from "./commands/leave";
+import { vcCommandData, handleVcCommand } from "./commands/vc";
+import { skipCommandData, skipCommand } from "./commands/skip";
+import { resetCommandData, resetCommand } from "./commands/reset";
+import { setCommandData, handleSetCommand } from "./commands/set";
+import { debugCommandData, handleDebugCommand } from "./commands/debug";
 import { textToSaveWav } from "./aivoice";
-import { createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection } from "@discordjs/voice";
+import { getVoiceConnection } from "@discordjs/voice";
 import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url";
+import {
+  handleVoiceStateUpdate,
+  playAudioFileForGuild,
+} from "./voice/voiceService";
 
 //.envファイルを読み込む
 dotenv.config()
@@ -50,10 +68,6 @@ client.once('ready', () => {
   }
 })
 
-
-const audioPlayer = createAudioPlayer();
-
-
 // メッセージ送ると喋る
 client.on('messageCreate', async (message: Message) => {
 
@@ -85,50 +99,55 @@ client.on('messageCreate', async (message: Message) => {
     return;
   }
   
-  const resource = createAudioResource(audioFilePath, { inlineVolume: true });
-
-  audioPlayer.removeAllListeners();
-
-  connection.subscribe(audioPlayer);
-  audioPlayer.play(resource);
-
-  // console.log("Connection state:", connection.state.status);
-  // console.log("Audio player state:", audioPlayer.state.status);
+  try {
+    await playAudioFileForGuild(message.guild!.id, connection, audioFilePath);
+  } finally {
+    deleteGeneratedFiles(audioFilePath);
+  }
 
 });
 
 
-// 音声再生に関するログメッセージ
-audioPlayer.on(AudioPlayerStatus.Playing, () => {
-  console.log("音声を再生しています...");
+// VCの参加人数ガード
+client.on(Events.VoiceStateUpdate, (_, newState) => {
+  handleVoiceStateUpdate(client, newState);
 });
 
-audioPlayer.on(AudioPlayerStatus.Idle, () => {
-  console.log("音声再生が終了しました。");
-});
-
-audioPlayer.on("error", (error) => {
-  console.error("音声再生エラー:", error);
-});
+function deleteGeneratedFiles(wavPath: string): void {
+  fs.unlink(wavPath, () => undefined);
+  fs.unlink(wavPath.replace(/\.wav$/i, ".txt"), () => undefined);
+}
 
 
 // スラッシュコマンド
 client.on(Events.InteractionCreate, async (interaction: Interaction<CacheType>) => {
   //console.log(interaction); //test code
   
-  if (!interaction.isCommand()) {
+  if (!interaction.isChatInputCommand()) {
       return;
   }
   const { commandName } = interaction;
 
-  if (commandName === joinCommandData.name) {
-    try {
-      joinVC(interaction);
-    }
-    catch(e) {
-      console.log('エラーが発生しました')
-      console.error(e);
-    }
+  const handlers = new Map<string, (interaction: Interaction<CacheType>) => Promise<void> | void>([
+    [joinCommandData.name, joinVC],
+    [leaveCommandData.name, leaveVC],
+    [vcCommandData.name, handleVcCommand],
+    [skipCommandData.name, skipCommand],
+    [resetCommandData.name, resetCommand],
+    [setCommandData.name, handleSetCommand],
+    [debugCommandData.name, handleDebugCommand],
+  ]);
+
+  const handler = handlers.get(commandName);
+  if (!handler) {
+    return;
+  }
+
+  try {
+    await handler(interaction);
+  } catch (e) {
+    console.log("エラーが発生しました");
+    console.error(e);
   }
 })
 

@@ -22,7 +22,11 @@ textToSaveWav("茜ちゃんやで", path.resolve(__dirname, "../voice/"))
 */
 
 
-export async function textToSaveWav(talkContent: string, savePath: string): Promise<void> {
+export async function textToSaveWav(
+  talkContent: string,
+  savePath: string,
+  voicePreset?: string
+): Promise<void> {
   const currentHost = ttsControl.GetAvailableHostNames()[0]; // 利用可能なホストの名称
 
   await ttsControl.Initialize(currentHost);
@@ -45,11 +49,20 @@ export async function textToSaveWav(talkContent: string, savePath: string): Prom
   const voiceNames = ttsControl.VoiceNames;//利用可能なキャラクター名一覧を取得
   // [ '琴葉 茜', '琴葉 茜（蕾）', '琴葉 葵', '琴葉 葵（蕾）' ]
 
-  //const voicePresetNames=ttsControl.VoicePresetNames;//標準ボイス、ユーザーボイス名一覧を取得
+  const voicePresetNames = ttsControl.VoicePresetNames;//標準ボイス、ユーザーボイス名一覧を取得
   // [ '琴葉 茜 - 新規', '琴葉 茜', '琴葉 茜（蕾）', '琴葉 葵', '琴葉 葵（蕾）' ]
 
-  //ボイスを琴葉 茜に設定する
-  ttsControl.CurrentVoicePresetName = voiceNames[0];
+  // 指定があれば優先し、無ければ先頭ボイスにフォールバックする。
+  const trimmedPreset = (voicePreset ?? "").trim();
+  const normalizedPreset = trimmedPreset.toLowerCase() === "auto" ? "" : trimmedPreset;
+  const resolvedPreset =
+    normalizedPreset &&
+    (voicePresetNames.includes(normalizedPreset) || voiceNames.includes(normalizedPreset))
+      ? normalizedPreset
+      : voiceNames[0];
+
+  //ボイスを設定する
+  ttsControl.CurrentVoicePresetName = resolvedPreset;
 
   // 喋る部分
   try{
