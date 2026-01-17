@@ -4,6 +4,9 @@
 ### unique files ###
 voice/*
 
+### jj ###
+jj/*
+
 ### Node ###
 # Logs
 logs
@@ -143,6 +146,9 @@ dist
 
 # SvelteKit build / generate output
 .svelte-kit
+
+### python ###
+build/config.gypi
 
 ### VisualStudioCode ###
 .vscode/*
