@@ -25,9 +25,14 @@ import {
   handleVoiceStateUpdate,
   playAudioFileForGuild,
 } from "./voice/voiceService";
+import { initializeKotobaWhisperPool } from "./stt/kotobaWhisper";
 
 //.envファイルを読み込む
 dotenv.config()
+
+void initializeKotobaWhisperPool().catch((error) => {
+  console.error("STT初期化に失敗しました:", error);
+});
 
 // ESM環境に合わせて定義する
 const __filename = fileURLToPath(import.meta.url);
