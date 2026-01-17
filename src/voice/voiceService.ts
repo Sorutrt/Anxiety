@@ -32,6 +32,7 @@ import {
 } from "../constants";
 import { getCharacters } from "../characters";
 import { getGuildConfig, getVoiceSession, updateVoiceSession } from "../state";
+import type { ConversationTurn } from "../types";
 import { textToSaveWav } from "../aivoice";
 import { generateReply } from "../llm/gemini";
 import { transcribeAudio } from "../stt/kotobaWhisper";
@@ -134,6 +135,27 @@ export async function startVcMode(interaction: ChatInputCommandInteraction): Pro
   const connection = getVoiceConnection(guildId);
   if (!connection) {
     await interaction.reply("ボイスチャンネルに接続してから開始してください。");
+    return;
+  }
+
+  const session = getVoiceSession(guildId);
+  const voiceChannelId = connection.joinConfig.channelId ?? session.voiceChannelId;
+  const guild = interaction.guild;
+  if (!guild || !voiceChannelId) {
+    await interaction.reply("ボイスチャンネルが特定できません。");
+    return;
+  }
+
+  const channel = guild.channels.cache.get(voiceChannelId);
+  if (!channel || !channel.isVoiceBased()) {
+    await interaction.reply("ボイスチャンネルが見つかりません。");
+    return;
+  }
+
+  const nonBotMembers = countNonBotMembers(channel);
+  if (nonBotMembers >= 2) {
+    await stopForMultiMember(interaction.client, guildId, nonBotMembers);
+    await interaction.reply("VC会話モードは1対1のときのみ開始できます。");
     return;
   }
 
@@ -467,28 +489,36 @@ async function processUtterance(
     return;
   }
 
+  const userText = text;
   if (!isSessionActive(guildId, utteranceId)) {
     resetSessionAfterTurn(guildId);
     return;
   }
 
-  updateVoiceSession(guildId, (current) => ({
-    ...current,
-    state: "THINKING",
-    history: [...current.history, { role: "user", text, at: Date.now() }].slice(-CONTEXT_TURNS * 2),
-  }));
+  updateVoiceSession(guildId, (current) => {
+    const userHistory: ConversationTurn[] = [
+      ...current.history,
+      { role: "user" as const, text: userText, at: Date.now() },
+    ].slice(-CONTEXT_TURNS * 2);
+    return {
+      ...current,
+      state: "THINKING",
+      history: userHistory,
+    };
+  });
   await logDebug(client, guildId, 1, `[STATE] TRANSCRIBING -> THINKING`);
-  await logDebug(client, guildId, 1, `[STT] text="${text}"`);
+  await logDebug(client, guildId, 1, `[STT] text="${userText}"`);
   await logDebug(client, guildId, 2, `[STT] time=${sttTime}ms`);
 
   const llmStart = Date.now();
-  const reply = await generateReplyFromGemini(guildId, text);
+  const reply = await generateReplyFromGemini(guildId, userText);
   const llmTime = Date.now() - llmStart;
   if (!reply) {
     await speakFallback(client, guildId, GENERAL_FALLBACK_TEXT);
     resetSessionAfterTurn(guildId);
     return;
   }
+  const replyText = reply;
   await logDebug(client, guildId, 2, `[LLM] time=${llmTime}ms`);
 
   if (!isSessionActive(guildId, utteranceId)) {
@@ -496,13 +526,17 @@ async function processUtterance(
     return;
   }
 
-  updateVoiceSession(guildId, (current) => ({
-    ...current,
-    state: "SPEAKING",
-    history: [...current.history, { role: "assistant", text: reply, at: Date.now() }].slice(
-      -CONTEXT_TURNS * 2
-    ),
-  }));
+  updateVoiceSession(guildId, (current) => {
+    const assistantHistory: ConversationTurn[] = [
+      ...current.history,
+      { role: "assistant" as const, text: replyText, at: Date.now() },
+    ].slice(-CONTEXT_TURNS * 2);
+    return {
+      ...current,
+      state: "SPEAKING",
+      history: assistantHistory,
+    };
+  });
   await logDebug(client, guildId, 1, `[STATE] THINKING -> SPEAKING`);
 
   const connection = getVoiceConnection(guildId);
@@ -511,7 +545,7 @@ async function processUtterance(
     return;
   }
 
-  await speakText(client, guildId, connection, reply);
+  await speakText(client, guildId, connection, replyText);
   resetSessionAfterTurn(guildId);
 }
 
@@ -721,7 +755,7 @@ async function logDebug(
 
   try {
     const channel = await client.channels.fetch(config.debugChannelId);
-    if (!channel || !channel.isTextBased()) {
+    if (!channel || !channel.isTextBased() || !("send" in channel)) {
       return;
     }
     await channel.send(message);
