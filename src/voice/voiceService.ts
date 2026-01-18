@@ -307,6 +307,8 @@ async function handleSpeechStart(
     return;
   }
 
+  console.log(`[VOICE] Discordのボイスが入ってきた guild=${guildId} user=${userId}`);
+
   const voiceChannel = connection.joinConfig.channelId
     ? connection.joinConfig.channelId
     : session.voiceChannelId;
@@ -429,6 +431,7 @@ async function finalizeRecording(
   const wavPath = path.join(recordingDir, `${utteranceId}.wav`);
   const wavBuffer = createWavBuffer(Buffer.concat(chunks), 48000, 2);
   await fs.promises.writeFile(wavPath, wavBuffer);
+  console.log(`[VOICE] 音声の保存が完了した path=${wavPath} durMs=${durationMs}`);
 
   try {
     await processUtterance(client, guildId, wavPath, utteranceId);
@@ -476,8 +479,11 @@ async function processUtterance(
   let text: string | null = null;
   const sttStart = Date.now();
   try {
+    console.log(`[STT] 音声をSTTに投げた path=${wavPath}`);
     const rawText = await transcribeAudio(wavPath, guildId);
     text = rawText.trim();
+    console.log(`[STT] 認識結果 text="${text}"`);
+    console.log(`[PIPELINE] STT=done LLM=waiting TTS=waiting`);
   } catch (error) {
     console.error("STTエラー:", error);
   }
@@ -511,6 +517,7 @@ async function processUtterance(
   await logDebug(client, guildId, 2, `[STT] time=${sttTime}ms`);
 
   const llmStart = Date.now();
+  console.log(`[PIPELINE] STT=done LLM=running TTS=waiting`);
   const reply = await generateReplyFromGemini(guildId, userText);
   const llmTime = Date.now() - llmStart;
   if (!reply) {
@@ -519,6 +526,7 @@ async function processUtterance(
     return;
   }
   const replyText = reply;
+  console.log(`[PIPELINE] STT=done LLM=done TTS=running`);
   await logDebug(client, guildId, 2, `[LLM] time=${llmTime}ms`);
 
   if (!isSessionActive(guildId, utteranceId)) {
@@ -546,6 +554,7 @@ async function processUtterance(
   }
 
   await speakText(client, guildId, connection, replyText);
+  console.log(`[PIPELINE] STT=done LLM=done TTS=done`);
   resetSessionAfterTurn(guildId);
 }
 

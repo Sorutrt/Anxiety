@@ -1,5 +1,4 @@
 import { LLM_TIMEOUT_SEC } from "../constants";
-import { retryOnce } from "../utils/async";
 import { CharacterDefinition, ConversationTurn } from "../types";
 
 type GenerateReplyArgs = {
@@ -72,6 +71,8 @@ async function callGemini(args: GenerateReplyArgs, timeoutMs: number): Promise<s
 
   const data = (await response.json()) as {
     candidates?: Array<{
+      finishReason?: string;
+      safetyRatings?: Array<{ category?: string; probability?: string }>;
       content?: { parts?: Array<{ text?: string }> };
     }>;
   };
@@ -83,14 +84,55 @@ async function callGemini(args: GenerateReplyArgs, timeoutMs: number): Promise<s
       .trim() ?? "";
 
   if (!text) {
+    const candidateSummary = (data.candidates ?? []).map((candidate, index) => ({
+      index,
+      finishReason: candidate.finishReason,
+      safetyRatings: candidate.safetyRatings?.map((rating) => ({
+        category: rating.category,
+        probability: rating.probability,
+      })),
+      hasContent: Boolean(candidate.content?.parts?.length),
+    }));
+    console.warn(
+      `[LLM] Gemini empty response detail=${JSON.stringify({
+        model: args.model,
+        historyCount: args.history.length,
+        userTextLength: args.userText.length,
+        candidateSummary,
+      })}`
+    );
     throw new Error("Geminiの応答が空でした。");
   }
 
   return text;
 }
 
+// LLMの一時的な失敗に備えて指数バックオフ付きで再試行する。
+async function retryWithBackoff<T>(
+  task: () => Promise<T>,
+  attempts = 3,
+  baseDelayMs = 500
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await task();
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        const delayMs = baseDelayMs * 2 ** (attempt - 1);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new Error("Geminiの呼び出しに失敗しました。");
+}
+
 // Gemini APIで返答テキストを生成する。
 export async function generateReply(args: GenerateReplyArgs): Promise<string> {
   const timeoutMs = LLM_TIMEOUT_SEC * 1000;
-  return await retryOnce(() => callGemini(args, timeoutMs));
+  return await retryWithBackoff(() => callGemini(args, timeoutMs));
 }
