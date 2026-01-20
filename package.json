@@ -19,6 +19,7 @@
   "type": "module",
   "scripts": {
     "test": "tsx ./src/main.ts",
+    "test:stt": "node --test --import tsx ./src/stt/kotobaWhisper.test.ts",
     "start": "node ./dist/main.js",
     "compile": "tsc -p .",
     "debug": "node inspect ./dist/main.js",
