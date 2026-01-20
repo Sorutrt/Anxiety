@@ -14,7 +14,8 @@ tools/kotoba-whisper/.cache/
 tools/kotoba-whisper/__pycache__/
 
 ### jj ###
-jj/*
+.jj/
+.jj/*
 
 ### Node ###
 # Logs
