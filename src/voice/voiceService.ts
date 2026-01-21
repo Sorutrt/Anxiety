@@ -26,20 +26,44 @@ import {
   MAX_UTTERANCE_SEC,
   MIN_UTTERANCE_MS,
   MULTI_MEMBER_NOTICE_TEXT,
+  SPEECH_GAP_MS,
+  SPEECH_INDICATOR_MIN_MS,
   STT_FALLBACK_TEXT,
   TTS_TIMEOUT_SEC,
-  VAD_SILENCE_MS,
 } from "../constants";
 import { getCharacters } from "../characters";
 import { getGuildConfig, getVoiceSession, updateVoiceSession } from "../state";
 import type { ConversationTurn } from "../types";
+import type { SpeechIndicatorResult } from "./speechIndicatorState";
 import { textToSaveWav } from "../aivoice";
 import { generateReply } from "../llm/gemini";
 import { transcribeAudio } from "../stt/openaiWhisper";
 import { retryOnce, withTimeout } from "../utils/async";
+import { SpeechIndicatorState } from "./speechIndicatorState";
 
 const audioPlayers = new Map<string, AudioPlayer>();
 const receiverInitialized = new Set<string>();
+// 緑ランプの点灯/消灯に基づく発話判定と録音状態をまとめて管理する。
+type ReceiverStream = NodeJS.ReadableStream & { destroy: () => void };
+type RecordingContext = {
+  utteranceId: string;
+  userId: string;
+  startedAt: number;
+  chunks: Buffer[];
+  receiverStream: ReceiverStream;
+  decoder: prism.opus.Decoder;
+  maxTimer: ReturnType<typeof setTimeout>;
+  finished: boolean;
+};
+type ActiveUtterance = {
+  userId: string;
+  utteranceId: string;
+  silenceTimer?: ReturnType<typeof setTimeout>;
+  indicatorState: SpeechIndicatorState;
+  indicatorResult?: SpeechIndicatorResult;
+  recording: RecordingContext;
+};
+const activeUtterances = new Map<string, ActiveUtterance>();
 const recordingDir = path.resolve(process.cwd(), "voice", "recorded");
 
 function ensureRecordingDir(): void {
@@ -111,8 +135,6 @@ export async function leaveVoiceChannel(
     return;
   }
 
-  connection.destroy();
-  receiverInitialized.delete(guildId);
   updateVoiceSession(guildId, (session) => ({
     ...session,
     state: "IDLE",
@@ -121,6 +143,9 @@ export async function leaveVoiceChannel(
     currentSpeakerId: undefined,
     currentUtteranceId: undefined,
   }));
+  stopActiveUtterance(guildId);
+  connection.destroy();
+  receiverInitialized.delete(guildId);
 
   await interaction.reply("ボイスチャンネルから退出しました。");
 }
@@ -185,6 +210,7 @@ export async function stopVcMode(interaction: ChatInputCommandInteraction): Prom
     currentSpeakerId: undefined,
     currentUtteranceId: undefined,
   }));
+  stopActiveUtterance(guildId);
   stopPlayback(guildId);
 
   await interaction.reply("VC会話モードを停止しました。");
@@ -249,12 +275,19 @@ export function handleVoiceStateUpdate(client: Client, state: VoiceState): void 
 
 function setupReceiver(client: Client, guildId: string, connection: VoiceConnection): void {
   if (receiverInitialized.has(guildId)) {
+    console.log(`[VOICE] receiver already initialized guild=${guildId}`);
     return;
   }
 
   receiverInitialized.add(guildId);
+  console.log(`[VOICE] receiver initialized guild=${guildId}`);
   connection.receiver.speaking.on("start", (userId) => {
+    console.log(`[VOICE] indicator on guild=${guildId} user=${userId}`);
     void handleSpeechStart(client, guildId, userId, connection);
+  });
+  connection.receiver.speaking.on("end", (userId) => {
+    console.log(`[VOICE] indicator off guild=${guildId} user=${userId}`);
+    handleSpeechEnd(guildId, userId);
   });
 }
 
@@ -276,6 +309,7 @@ async function stopForMultiMember(
     currentSpeakerId: undefined,
     currentUtteranceId: undefined,
   }));
+  stopActiveUtterance(guildId);
   stopPlayback(guildId);
   await logDebug(client, guildId, 1, `[GUARD] stop reason=MULTI_MEMBER nonBot=${nonBotMembers}`);
 
@@ -294,35 +328,164 @@ async function handleSpeechStart(
   connection: VoiceConnection
 ): Promise<void> {
   const session = getVoiceSession(guildId);
-  if (!session.isVcModeRunning || session.state !== "IDLE") {
+  if (!session.isVcModeRunning) {
+    console.log(`[VOICE] start ignored: vc mode off guild=${guildId} user=${userId}`);
+    return;
+  }
+
+  const active = activeUtterances.get(guildId);
+  if (active) {
+    if (active.userId !== userId) {
+      console.log(
+        `[VOICE] start ignored: active user mismatch guild=${guildId} user=${userId} active=${active.userId}`
+      );
+      return;
+    }
+    if (active.silenceTimer) {
+      clearTimeout(active.silenceTimer);
+      active.silenceTimer = undefined;
+    }
+    active.indicatorState.onIndicatorOn(Date.now());
+    return;
+  }
+
+  if (session.state !== "IDLE") {
+    console.log(
+      `[VOICE] start ignored: session busy guild=${guildId} user=${userId} state=${session.state}`
+    );
     return;
   }
 
   if (userId === client.user?.id) {
+    console.log(`[VOICE] start ignored: self guild=${guildId} user=${userId}`);
     return;
   }
 
-  const member = await client.users.fetch(userId).catch(() => null);
-  if (member?.bot) {
-    return;
-  }
+  const memberPromise = client.users.fetch(userId).catch(() => null);
 
   console.log(`[VOICE] Discordのボイスが入ってきた guild=${guildId} user=${userId}`);
 
   const voiceChannel = connection.joinConfig.channelId
     ? connection.joinConfig.channelId
     : session.voiceChannelId;
+  const now = Date.now();
+  const utteranceId = `${userId}-${now}`;
   updateVoiceSession(guildId, (current) => ({
     ...current,
     voiceChannelId: voiceChannel,
     pendingNoticeSent: false,
     state: "LISTENING",
     currentSpeakerId: userId,
-    currentUtteranceId: `${userId}-${Date.now()}`,
+    currentUtteranceId: utteranceId,
   }));
-  await logDebug(client, guildId, 1, `[STATE] IDLE -> LISTENING`);
 
-  startRecording(client, guildId, userId, connection);
+  const recording = startRecording(client, guildId, userId, utteranceId, connection);
+  if (!recording) {
+    updateVoiceSession(guildId, (current) => ({
+      ...current,
+      state: "IDLE",
+      currentSpeakerId: undefined,
+      currentUtteranceId: undefined,
+    }));
+    return;
+  }
+  const indicatorState = new SpeechIndicatorState({
+    minOnMs: SPEECH_INDICATOR_MIN_MS,
+    gapMs: SPEECH_GAP_MS,
+  });
+  indicatorState.start(now);
+  activeUtterances.set(guildId, {
+    userId,
+    utteranceId,
+    indicatorState,
+    recording,
+  });
+  void logDebug(client, guildId, 1, `[STATE] IDLE -> LISTENING`);
+
+  const member = await memberPromise;
+  if (member?.bot) {
+    const current = getVoiceSession(guildId);
+    if (current.currentUtteranceId !== utteranceId) {
+      return;
+    }
+    updateVoiceSession(guildId, (current) => ({
+      ...current,
+      state: "IDLE",
+      currentSpeakerId: undefined,
+      currentUtteranceId: undefined,
+    }));
+    stopActiveUtterance(guildId, utteranceId);
+  }
+}
+
+// 緑ランプの消灯で無音判定を進め、発話の区切りタイマーを更新する。
+function handleSpeechEnd(guildId: string, userId: string): void {
+  const active = activeUtterances.get(guildId);
+  if (!active || active.userId !== userId) {
+    return;
+  }
+
+  if (active.silenceTimer) {
+    clearTimeout(active.silenceTimer);
+  }
+  const now = Date.now();
+  const silenceDeadline = active.indicatorState.onIndicatorOff(now);
+  if (!silenceDeadline) {
+    return;
+  }
+  active.silenceTimer = setTimeout(() => {
+    handleSilenceTimeout(guildId, active.utteranceId);
+  }, Math.max(0, silenceDeadline - now));
+}
+
+// 無音状態が一定時間続いた場合に発話終了を確定する。
+function handleSilenceTimeout(guildId: string, utteranceId: string): void {
+  const active = activeUtterances.get(guildId);
+  if (!active || active.utteranceId !== utteranceId) {
+    return;
+  }
+  const now = Date.now();
+  if (!active.indicatorState.shouldEnd(now)) {
+    return;
+  }
+  stopActiveUtterance(guildId, utteranceId, now);
+}
+
+// 発話終了を確定するために録音ストリームを終了させる。
+function stopActiveUtterance(guildId: string, utteranceId?: string, endedAt?: number): void {
+  const active = activeUtterances.get(guildId);
+  if (!active) {
+    return;
+  }
+  if (utteranceId && active.utteranceId !== utteranceId) {
+    return;
+  }
+  if (active.silenceTimer) {
+    clearTimeout(active.silenceTimer);
+    active.silenceTimer = undefined;
+  }
+  active.indicatorResult = active.indicatorState.complete(endedAt ?? Date.now());
+  if (!active.recording.finished) {
+    // 手動終了時にデコーダを確実に閉じて finalize を発火させる。
+    active.recording.receiverStream.unpipe(active.recording.decoder);
+    active.recording.decoder.end();
+    active.recording.receiverStream.destroy();
+  }
+}
+
+// 進行中の発話状態をクリアしてタイマーリークを防ぐ。
+function clearActiveUtterance(guildId: string, utteranceId?: string): void {
+  const active = activeUtterances.get(guildId);
+  if (!active) {
+    return;
+  }
+  if (utteranceId && active.utteranceId !== utteranceId) {
+    return;
+  }
+  if (active.silenceTimer) {
+    clearTimeout(active.silenceTimer);
+  }
+  activeUtterances.delete(guildId);
 }
 
 // 音声収録〜WAV保存までをまとめて行う。
@@ -330,20 +493,19 @@ function startRecording(
   client: Client,
   guildId: string,
   userId: string,
+  utteranceId: string,
   connection: VoiceConnection
-): void {
+): RecordingContext | null {
   const session = getVoiceSession(guildId);
-  if (!session.currentUtteranceId) {
-    return;
+  if (session.currentUtteranceId !== utteranceId) {
+    return null;
   }
 
-  const utteranceId = session.currentUtteranceId;
   ensureRecordingDir();
 
   const receiverStream = connection.receiver.subscribe(userId, {
     end: {
-      behavior: EndBehaviorType.AfterSilence,
-      duration: VAD_SILENCE_MS,
+      behavior: EndBehaviorType.Manual,
     },
   });
   const decoder = new prism.opus.Decoder({
@@ -353,8 +515,20 @@ function startRecording(
   });
   const chunks: Buffer[] = [];
   const startedAt = Date.now();
-  const maxTimer = setTimeout(() => receiverStream.destroy(), MAX_UTTERANCE_SEC * 1000);
-  let finished = false;
+  const maxTimer = setTimeout(
+    () => stopActiveUtterance(guildId, utteranceId, Date.now()),
+    MAX_UTTERANCE_SEC * 1000
+  );
+  const recording: RecordingContext = {
+    utteranceId,
+    userId,
+    startedAt,
+    chunks,
+    receiverStream,
+    decoder,
+    maxTimer,
+    finished: false,
+  };
 
   receiverStream.pipe(decoder);
 
@@ -363,20 +537,23 @@ function startRecording(
   });
 
   const finalizeOnce = () => {
-    if (finished) {
+    if (recording.finished) {
       return;
     }
-    finished = true;
-    clearTimeout(maxTimer);
-    const durationMs = Date.now() - startedAt;
+    recording.finished = true;
+    clearTimeout(recording.maxTimer);
+    const durationMs = Date.now() - recording.startedAt;
     void finalizeRecording(client, guildId, utteranceId, durationMs, chunks);
   };
 
   decoder.on("end", finalizeOnce);
   decoder.on("close", finalizeOnce);
+  receiverStream.on("end", finalizeOnce);
+  receiverStream.on("close", finalizeOnce);
 
   receiverStream.on("error", (error) => {
-    clearTimeout(maxTimer);
+    clearTimeout(recording.maxTimer);
+    recording.finished = true;
     console.error("音声受信エラー:", error);
     updateVoiceSession(guildId, (current) => ({
       ...current,
@@ -384,10 +561,12 @@ function startRecording(
       currentSpeakerId: undefined,
       currentUtteranceId: undefined,
     }));
+    clearActiveUtterance(guildId, utteranceId);
   });
 
   decoder.on("error", (error) => {
-    clearTimeout(maxTimer);
+    clearTimeout(recording.maxTimer);
+    recording.finished = true;
     console.error("Opusのデコードに失敗しました:", error);
     updateVoiceSession(guildId, (current) => ({
       ...current,
@@ -395,7 +574,10 @@ function startRecording(
       currentSpeakerId: undefined,
       currentUtteranceId: undefined,
     }));
+    clearActiveUtterance(guildId, utteranceId);
   });
+
+  return recording;
 }
 
 async function finalizeRecording(
@@ -406,18 +588,33 @@ async function finalizeRecording(
   chunks: Buffer[]
 ): Promise<void> {
   const session = getVoiceSession(guildId);
+  const active = activeUtterances.get(guildId);
+  const indicatorResult =
+    active?.utteranceId === utteranceId
+      ? (active.indicatorResult ?? active.indicatorState.complete(Date.now()))
+      : null;
+  const hasValidSpeech = indicatorResult?.isValid ?? false;
   if (session.currentUtteranceId !== utteranceId) {
+    clearActiveUtterance(guildId, utteranceId);
     return;
   }
 
-  if (durationMs < MIN_UTTERANCE_MS || chunks.length === 0) {
+  if (!hasValidSpeech || durationMs < MIN_UTTERANCE_MS || chunks.length === 0) {
     updateVoiceSession(guildId, (current) => ({
       ...current,
       state: "IDLE",
       currentSpeakerId: undefined,
       currentUtteranceId: undefined,
     }));
-    await logDebug(client, guildId, 2, `[VAD] drop dur=${durationMs}ms`);
+    const reason = !hasValidSpeech ? "indicator" : "duration";
+    const totalOnMs = indicatorResult?.totalOnMs ?? 0;
+    await logDebug(
+      client,
+      guildId,
+      2,
+      `[SPEECH] drop dur=${durationMs}ms on=${totalOnMs}ms reason=${reason}`
+    );
+    clearActiveUtterance(guildId, utteranceId);
     return;
   }
 
@@ -426,7 +623,7 @@ async function finalizeRecording(
     state: "TRANSCRIBING",
   }));
   await logDebug(client, guildId, 1, `[STATE] LISTENING -> TRANSCRIBING`);
-  await logDebug(client, guildId, 2, `[VAD] end dur=${(durationMs / 1000).toFixed(2)}s`);
+  await logDebug(client, guildId, 2, `[SPEECH] end dur=${(durationMs / 1000).toFixed(2)}s`);
 
   const wavPath = path.join(recordingDir, `${utteranceId}.wav`);
   const wavBuffer = createWavBuffer(Buffer.concat(chunks), 48000, 2);
@@ -437,6 +634,7 @@ async function finalizeRecording(
     await processUtterance(client, guildId, wavPath, utteranceId);
   } finally {
     await fs.promises.unlink(wavPath).catch(() => undefined);
+    clearActiveUtterance(guildId, utteranceId);
   }
 }
 
