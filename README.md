@@ -46,8 +46,8 @@ Privileged Gateway Intents で以下を有効化してください
 git clone https://github.com/Sorutrt/ReadDiscordByA.I.VOICE.git
 ```
 `.env.example`を指定のとおりに書き換え、`.env`にリネームしてください  
-`GEMINI_API_KEY` と `KOTOBA_WHISPER_BIN` も設定してください  
-`KOTOBA_WHISPER_BIN` の例: `.\tools\kotoba-whisper\kotoba-whisper.cmd`
+`GEMINI_API_KEY` と `OPENAI_WHISPER_BIN` も設定してください  
+`OPENAI_WHISPER_BIN` の例: `.\tools\openai-whisper\openai-whisper.cmd`
 
 npmパッケージをインストールします
 ```
@@ -74,8 +74,8 @@ cd ..\..
 New-Item -ItemType Directory -Path voice
 ```
 
-`kotoba-whisper` CLI は `tools/kotoba-whisper/` を参照してください。
-`uv sync --project .\tools\kotoba-whisper` を実行して依存を用意します。
+`openai-whisper` CLI は `tools/openai-whisper/` を参照してください。
+`uv sync --project .\tools\openai-whisper` を実行して依存を用意します。
 キャラクター定義は `data/characters.json` を編集してください。
 
 `opusscript` が無いと音声再生で落ちるため、入れておきます。

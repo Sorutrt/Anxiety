@@ -25,7 +25,7 @@ import {
   handleVoiceStateUpdate,
   playAudioFileForGuild,
 } from "./voice/voiceService";
-import { initializeKotobaWhisperPool } from "./stt/kotobaWhisper";
+import { initializeKotobaWhisperPool } from "./stt/openaiWhisper";
 
 //.envファイルを読み込む
 dotenv.config()

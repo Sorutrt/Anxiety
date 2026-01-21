@@ -35,7 +35,7 @@ import { getGuildConfig, getVoiceSession, updateVoiceSession } from "../state";
 import type { ConversationTurn } from "../types";
 import { textToSaveWav } from "../aivoice";
 import { generateReply } from "../llm/gemini";
-import { transcribeAudio } from "../stt/kotobaWhisper";
+import { transcribeAudio } from "../stt/openaiWhisper";
 import { retryOnce, withTimeout } from "../utils/async";
 
 const audioPlayers = new Map<string, AudioPlayer>();

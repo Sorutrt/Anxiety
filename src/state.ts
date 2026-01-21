@@ -18,7 +18,7 @@ export function getGuildConfig(guildId: string): GuildConfig {
     defaultCharacterId,
     debugLevel: 0,
     providers: {
-      stt: "kotoba-whisper",
+      stt: "openai-whisper",
       llm: "gemini-3-flash-preview",
       tts: "aivoice",
     },
