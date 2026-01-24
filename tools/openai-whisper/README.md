@@ -30,4 +30,4 @@ uv run --project . python .\whisper_cli.py <wav>
 ```
 
 現在の構成は **音声認識のみ** です（話者分離/句読点補正は省略）。  
-`--model` の既定は `tiny` です。
+`--model` の既定は `base` です。

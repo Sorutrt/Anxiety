@@ -14,9 +14,7 @@ def write_json(payload: dict[str, Any]) -> None:
 # Serve JSON requests over stdin/stdout for a persistent STT worker.
 def main() -> int:
     parser = argparse.ArgumentParser(description="OpenAI-Whisper Server")
-    parser.add_argument("--model", default="tiny")
-    parser.add_argument("--chunk-length", type=int, default=15)
-    parser.add_argument("--add-punctuation", action="store_true")
+    parser.add_argument("--model", default="base")
     args = parser.parse_args()
 
     configure_stdio()
@@ -26,11 +24,6 @@ def main() -> int:
     except Exception as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-
-    if "--chunk-length" in sys.argv:
-        print("warning: chunk_length is not supported; ignored", file=sys.stderr)
-    if args.add_punctuation:
-        print("warning: add_punctuation is not supported; ignored", file=sys.stderr)
 
     write_json({"type": "ready"})
 
