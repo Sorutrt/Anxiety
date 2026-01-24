@@ -20,7 +20,7 @@ function buildSystemPrompt(character: CharacterDefinition): string {
     character.speakingStyle,
     "出力条件:",
     "- 日本語",
-    "- 2〜4文、300文字以内",
+    "- 一言か二言、200文字以内",
     "- 質問は最大1つ",
     "- @everyone/@hereは禁止",
   ]
