@@ -19,7 +19,7 @@ export function getGuildConfig(guildId: string): GuildConfig {
     debugLevel: 0,
     providers: {
       stt: "openai-whisper",
-      llm: "gemini-3-flash-preview",
+      llm: "gemini-2.5-flash-lite",
       tts: "aivoice",
     },
   };

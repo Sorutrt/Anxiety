@@ -23,6 +23,7 @@ function buildSystemPrompt(character: CharacterDefinition): string {
     "- 一言か二言、200文字以内",
     "- 質問は最大1つ",
     "- @everyone/@hereは禁止",
+    "- 絵文字と記号、太字、イタリックは使わないで",
   ]
     .filter((line) => line.trim().length > 0)
     .join("\n");
