@@ -1,4 +1,4 @@
-import { LLM_TIMEOUT_SEC } from "../constants";
+import { LLM_TIMEOUT_SEC, OLLAMA_NUM_CTX } from "../constants";
 import { buildChatMessages, buildSystemPrompt, GenerateReplyArgs, retryWithBackoff } from "./common";
 import { OLLAMA_API_BASE_URL } from "./ollamaConfig";
 
@@ -12,6 +12,7 @@ async function callOllama(args: GenerateReplyArgs, timeoutMs: number): Promise<s
     stream: false,
     options: {
       temperature: 0.7,
+      num_ctx: OLLAMA_NUM_CTX,
       num_predict: 512,
     },
   };
