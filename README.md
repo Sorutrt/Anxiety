@@ -46,7 +46,9 @@ Privileged Gateway Intents で以下を有効化してください
 git clone https://github.com/Sorutrt/ReadDiscordByA.I.VOICE.git
 ```
 `.env.example`を指定のとおりに書き換え、`.env`にリネームしてください  
-`GEMINI_API_KEY` と `OPENAI_WHISPER_BIN` も設定してください  
+LLMはデフォルトで Ollama + `qwen2.5:3b-instruct` を使います。`LLM_PROVIDER` / `LLM_MODEL` を必要に応じて設定してください  
+Geminiに切り替える場合は `LLM_PROVIDER=gemini` と `GEMINI_API_KEY` を設定してください  
+`OPENAI_WHISPER_BIN` も設定してください  
 `OPENAI_WHISPER_BIN` の例: `.\tools\openai-whisper\openai-whisper.cmd`
 
 npmパッケージをインストールします
@@ -54,6 +56,17 @@ npmパッケージをインストールします
 npm i
 ```
 を実行
+
+Ollamaはリポジトリ配下に配置します（モデル/キャッシュも配下に固定）
+```
+powershell -ExecutionPolicy Bypass -File .\tools\ollama\install.ps1
+```
+
+Ollamaを使う場合は、事前にモデルを取得しておきます
+```
+.\tools\ollama\ollama.ps1 pull qwen2.5:3b-instruct
+```
+`/join` 実行時にOllamaが未起動なら自動で起動し、`/leave` や人数増加での自動停止時に終了します
 
 #### 依存のビルド注意（Windows）
 `winax` がネイティブビルドを行うため、`node-gyp` 用に `uv` の Python を渡します。
@@ -141,4 +154,5 @@ npx tsx .\src\main.ts
 
 ## その他 
 質問などあればIssuesに投げてください
+
 

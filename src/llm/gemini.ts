@@ -1,35 +1,15 @@
 import { LLM_TIMEOUT_SEC } from "../constants";
-import { CharacterDefinition, ConversationTurn } from "../types";
-
-type GenerateReplyArgs = {
-  guildId: string;
-  model: string;
-  character: CharacterDefinition;
-  history: ConversationTurn[];
-  userText: string;
-};
+import { GenerateReplyArgs, buildSystemPrompt, retryWithBackoff } from "./common";
 
 type GeminiContent = {
   role: "user" | "model";
   parts: { text: string }[];
 };
 
-function buildSystemPrompt(character: CharacterDefinition): string {
-  return [
-    character.systemPrompt,
-    character.speakingStyle,
-    "出力条件:",
-    "- 日本語",
-    "- 一言か二言、200文字以内",
-    "- 質問は最大1つ",
-    "- @everyone/@hereは禁止",
-    "- 絵文字と記号、太字、イタリックは使わないで",
-  ]
-    .filter((line) => line.trim().length > 0)
-    .join("\n");
-}
-
-function buildContents(history: ConversationTurn[], userText: string): GeminiContent[] {
+function buildContents(
+  history: GenerateReplyArgs["history"],
+  userText: string
+): GeminiContent[] {
   const contents: GeminiContent[] = history.map((turn) => ({
     role: turn.role === "assistant" ? "model" : "user",
     parts: [{ text: turn.text }],
@@ -108,32 +88,10 @@ async function callGemini(args: GenerateReplyArgs, timeoutMs: number): Promise<s
   return text;
 }
 
-// LLMの一時的な失敗に備えて指数バックオフ付きで再試行する。
-async function retryWithBackoff<T>(
-  task: () => Promise<T>,
-  attempts = 3,
-  baseDelayMs = 500
-): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      return await task();
-    } catch (error) {
-      lastError = error;
-      if (attempt < attempts) {
-        const delayMs = baseDelayMs * 2 ** (attempt - 1);
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      }
-    }
-  }
-  if (lastError instanceof Error) {
-    throw lastError;
-  }
-  throw new Error("Geminiの呼び出しに失敗しました。");
-}
-
 // Gemini APIで返答テキストを生成する。
 export async function generateReply(args: GenerateReplyArgs): Promise<string> {
   const timeoutMs = LLM_TIMEOUT_SEC * 1000;
-  return await retryWithBackoff(() => callGemini(args, timeoutMs));
+  return await retryWithBackoff(() => callGemini(args, timeoutMs), {
+    fallbackMessage: "Geminiの呼び出しに失敗しました。",
+  });
 }

@@ -13,6 +13,16 @@ tools/kotoba-whisper/cache/
 tools/kotoba-whisper/.cache/
 tools/kotoba-whisper/__pycache__/
 
+### ollama ###
+tools/ollama/*.exe
+tools/ollama/*.dll
+tools/ollama/*.zip
+tools/ollama/lib/
+tools/ollama/lib/*
+tools/ollama/models/
+tools/ollama/tmp/
+tools/ollama/.cache/
+
 ### jj ###
 .jj/
 .jj/*

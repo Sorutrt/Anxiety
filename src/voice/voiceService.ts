@@ -36,7 +36,8 @@ import { getGuildConfig, getVoiceSession, updateVoiceSession } from "../state";
 import type { ConversationTurn } from "../types";
 import type { SpeechIndicatorResult } from "./speechIndicatorState";
 import { textToSaveWav } from "../aivoice";
-import { generateReply } from "../llm/gemini";
+import { generateReply } from "../llm";
+import { ensureOllamaRunning, stopOllamaServer } from "../llm/ollamaManager";
 import { transcribeAudio } from "../stt/openaiWhisper";
 import { retryOnce, withTimeout } from "../utils/async";
 import { SpeechIndicatorState } from "./speechIndicatorState";
@@ -106,6 +107,20 @@ export async function joinVoiceChannelFromInteraction(
     return;
   }
 
+  await interaction.deferReply();
+  const config = getGuildConfig(guild.id);
+  if (config.providers.llm.trim().toLowerCase().startsWith("ollama:")) {
+    try {
+      await ensureOllamaRunning();
+    } catch (error) {
+      console.error("Ollama起動エラー:", error);
+      await interaction.editReply(
+        "Ollamaの起動に失敗しました。tools/ollama/install.ps1 の実行とモデルの取得を確認してください。"
+      );
+      return;
+    }
+  }
+
   const existingConnection = getVoiceConnection(guild.id);
   const connection =
     existingConnection && existingConnection.joinConfig.channelId === voiceChannel.id
@@ -124,7 +139,7 @@ export async function joinVoiceChannelFromInteraction(
   const nonBotMembers = countNonBotMembers(voiceChannel);
   if (nonBotMembers >= 2) {
     await stopForMultiMember(interaction.client, guild.id, nonBotMembers);
-    await interaction.reply(
+    await interaction.editReply(
       `${voiceChannel.name} チャンネルに接続しました。VC会話モードは1対1のときのみ開始できます。人数が1人になったら /join で再開してください。`
     );
     return;
@@ -142,7 +157,7 @@ export async function joinVoiceChannelFromInteraction(
   const statusMessage = wasRunning
     ? "VC会話モードは既に開始しています。"
     : "VC会話モードを開始します。";
-  await interaction.reply(`${voiceChannel.name} チャンネルに接続しました。${statusMessage}`);
+  await interaction.editReply(`${voiceChannel.name} チャンネルに接続しました。${statusMessage}`);
 }
 
 export async function leaveVoiceChannel(
@@ -171,6 +186,7 @@ export async function leaveVoiceChannel(
   stopActiveUtterance(guildId);
   connection.destroy();
   receiverInitialized.delete(guildId);
+  await stopOllamaServer();
 
   await interaction.reply("ボイスチャンネルから退出しました。");
 }
@@ -278,6 +294,7 @@ async function stopForMultiMember(
       await speakText(client, guildId, connection, MULTI_MEMBER_NOTICE_TEXT);
     }
   }
+  await stopOllamaServer();
 }
 
 async function handleSpeechStart(
@@ -675,7 +692,7 @@ async function processUtterance(
 
   const llmStart = Date.now();
   console.log(`[PIPELINE] STT=done LLM=running TTS=waiting`);
-  const reply = await generateReplyFromGemini(guildId, userText);
+  const reply = await generateReplyFromLlm(guildId, userText);
   const llmTime = Date.now() - llmStart;
   if (!reply) {
     await speakFallback(client, guildId, GENERAL_FALLBACK_TEXT);
@@ -715,7 +732,7 @@ async function processUtterance(
   resetSessionAfterTurn(guildId);
 }
 
-async function generateReplyFromGemini(guildId: string, userText: string): Promise<string | null> {
+async function generateReplyFromLlm(guildId: string, userText: string): Promise<string | null> {
   const characters = getCharacters();
   const session = getVoiceSession(guildId);
   const character =

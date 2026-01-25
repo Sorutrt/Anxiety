@@ -19,9 +19,11 @@ import path from "path"
 import { fileURLToPath } from "url";
 import { handleVoiceStateUpdate } from "./voice/voiceService";
 import { initializeKotobaWhisperPool } from "./stt/openaiWhisper";
+import { registerOllamaShutdownHandlers } from "./llm/ollamaManager";
 
 //.envファイルを読み込む
 dotenv.config()
+registerOllamaShutdownHandlers()
 
 void initializeKotobaWhisperPool().catch((error) => {
   console.error("STT初期化に失敗しました:", error);

@@ -4,6 +4,18 @@ import { GuildConfig, VoiceSession } from "./types";
 const guildConfigs = new Map<string, GuildConfig>();
 const voiceSessions = new Map<string, VoiceSession>();
 
+// 環境変数からデフォルトのLLM指定文字列を組み立てる。
+function resolveDefaultLlmSpec(): string {
+  const providerRaw = process.env.LLM_PROVIDER?.trim().toLowerCase();
+  const provider =
+    providerRaw === "gemini" || providerRaw === "ollama" ? providerRaw : "ollama";
+  const modelRaw = process.env.LLM_MODEL?.trim();
+  const defaultModel =
+    provider === "ollama" ? "qwen2.5:3b-instruct" : "gemini-2.5-flash-lite";
+  const model = modelRaw && modelRaw.length > 0 ? modelRaw : defaultModel;
+  return `${provider}:${model}`;
+}
+
 export function getGuildConfig(guildId: string): GuildConfig {
   const existing = guildConfigs.get(guildId);
   if (existing) {
@@ -19,7 +31,7 @@ export function getGuildConfig(guildId: string): GuildConfig {
     debugLevel: 0,
     providers: {
       stt: "openai-whisper",
-      llm: "gemini-2.5-flash-lite",
+      llm: resolveDefaultLlmSpec(),
       tts: "aivoice",
     },
   };
