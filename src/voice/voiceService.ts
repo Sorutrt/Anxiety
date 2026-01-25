@@ -850,7 +850,7 @@ async function speakText(
     return;
   }
 
-  const wavFile = findLatestWavFile(voiceDir, formattedText);
+  const wavFile = findLatestWavFileAfter(voiceDir, ttsStart);
   if (!wavFile) {
     return;
   }
@@ -867,17 +867,22 @@ async function speakText(
   await logDebug(client, guildId, 2, `[TTS] time=${Date.now() - ttsStart}ms`);
 }
 
-function findLatestWavFile(dir: string, hintText: string): string | null {
-  const searchFileName = hintText.slice(0, 10) + ".wav";
-  const files = fs.readdirSync(dir).filter((filename) => filename.includes(searchFileName));
+// TTS開始時刻以降に作られたWAVのうち最新のものを取得する。
+export function findLatestWavFileAfter(dir: string, sinceMs: number): string | null {
+  const files = fs
+    .readdirSync(dir)
+    .filter((filename) => filename.toLowerCase().endsWith(".wav"));
   if (files.length === 0) {
     return null;
   }
   const latest = files
     .map((filename) => {
       const resolved = path.resolve(dir, filename);
-      return { path: resolved, mtime: fs.statSync(resolved).mtimeMs };
+      const stat = fs.statSync(resolved);
+      return stat.isFile() ? { path: resolved, mtime: stat.mtimeMs } : null;
     })
+    .filter((item): item is { path: string; mtime: number } => item !== null)
+    .filter((item) => item.mtime >= sinceMs)
     .sort((a, b) => a.mtime - b.mtime)
     .pop();
   return latest?.path ?? null;
