@@ -8,11 +8,11 @@ Windows + A.I.VOICE Editor 前提、1対1運用を想定しています。
 
 ## キャラクター定義(characters.json)
 
-- `id`
-- `displayName`
-- `systemPrompt`
-- `speakingStyle`
-- `voicePreset`
+- `id`: 一意な識別子。/set character <id|name> や defaultCharacterId に使われます（小文字化して照合）。日本語も可。
+- `displayName`: 表示名。/set character の名前照合に使われます（小文字化して照合）。
+- `systemPrompt`: LLM のシステムプロンプト本文。
+- `speakingStyle`: 口調・話し方の指示。systemPrompt と連結されます。
+- `voicePreset`: A.I.VOICE のボイスプリセット名 or ボイス名。"auto" または空なら先頭のボイスにフォールバックします。
 
 ```json
 [
