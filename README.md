@@ -118,10 +118,8 @@ node .\dist\main.js
 - □ メッセージ表示レベル: 簡潔
 
 ## 🔊 使い方
-`/join`でユーザーのVCに入ります  
+`/join`でユーザーのVCに入り、VC会話を開始します  
 `/leave` でVCから退出します  
-`/vc start` でVC会話を開始します  
-`/vc stop` で会話を停止します  
 `/skip` で再生中の音声をスキップします  
 `/reset` で会話履歴をクリアします  
 `/set character <id|name>` で話者を切り替えます  

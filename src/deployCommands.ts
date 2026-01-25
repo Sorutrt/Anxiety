@@ -6,14 +6,12 @@ import { leaveCommandData } from "./commands/leave";
 import { resetCommandData } from "./commands/reset";
 import { setCommandData } from "./commands/set";
 import { skipCommandData } from "./commands/skip";
-import { vcCommandData } from "./commands/vc";
 
 dotenv.config();
 
 const commands: any[] = [
   joinCommandData.toJSON(),
   leaveCommandData.toJSON(),
-  vcCommandData.toJSON(),
   skipCommandData.toJSON(),
   resetCommandData.toJSON(),
   setCommandData.toJSON(),

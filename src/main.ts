@@ -10,7 +10,6 @@ import {
 import dotenv from "dotenv";
 import { joinCommandData, joinVC } from "./commands/join";
 import { leaveCommandData, leaveVC } from "./commands/leave";
-import { vcCommandData, handleVcCommand } from "./commands/vc";
 import { skipCommandData, skipCommand } from "./commands/skip";
 import { resetCommandData, resetCommand } from "./commands/reset";
 import { setCommandData, handleSetCommand } from "./commands/set";
@@ -83,7 +82,6 @@ client.on(Events.InteractionCreate, async (interaction: Interaction<CacheType>) 
   const handlers = new Map<string, (interaction: Interaction<CacheType>) => Promise<void> | void>([
     [joinCommandData.name, joinVC],
     [leaveCommandData.name, leaveVC],
-    [vcCommandData.name, handleVcCommand],
     [skipCommandData.name, skipCommand],
     [resetCommandData.name, resetCommand],
     [setCommandData.name, handleSetCommand],

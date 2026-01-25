@@ -106,18 +106,43 @@ export async function joinVoiceChannelFromInteraction(
     return;
   }
 
-  const connection = joinVoiceChannel({
-    channelId: voiceChannel.id,
-    guildId: voiceChannel.guild.id,
-    adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-    selfDeaf: false,
-  });
+  const existingConnection = getVoiceConnection(guild.id);
+  const connection =
+    existingConnection && existingConnection.joinConfig.channelId === voiceChannel.id
+      ? existingConnection
+      : joinVoiceChannel({
+          channelId: voiceChannel.id,
+          guildId: voiceChannel.guild.id,
+          adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+          selfDeaf: false,
+        });
 
-  getVoiceSession(guild.id, voiceChannel.id);
+  const session = getVoiceSession(guild.id, voiceChannel.id);
   getOrCreateAudioPlayer(guild.id);
   setupReceiver(interaction.client, guild.id, connection);
 
-  await interaction.reply(`${voiceChannel.name} チャンネルに接続しました！`);
+  const nonBotMembers = countNonBotMembers(voiceChannel);
+  if (nonBotMembers >= 2) {
+    await stopForMultiMember(interaction.client, guild.id, nonBotMembers);
+    await interaction.reply(
+      `${voiceChannel.name} チャンネルに接続しました。VC会話モードは1対1のときのみ開始できます。人数が1人になったら /join で再開してください。`
+    );
+    return;
+  }
+
+  const wasRunning = session.isVcModeRunning;
+  if (!wasRunning) {
+    updateVoiceSession(guild.id, (current) => ({
+      ...current,
+      isVcModeRunning: true,
+      stopReason: undefined,
+    }));
+  }
+
+  const statusMessage = wasRunning
+    ? "VC会話モードは既に開始しています。"
+    : "VC会話モードを開始します。";
+  await interaction.reply(`${voiceChannel.name} チャンネルに接続しました。${statusMessage}`);
 }
 
 export async function leaveVoiceChannel(
@@ -148,72 +173,6 @@ export async function leaveVoiceChannel(
   receiverInitialized.delete(guildId);
 
   await interaction.reply("ボイスチャンネルから退出しました。");
-}
-
-export async function startVcMode(interaction: ChatInputCommandInteraction): Promise<void> {
-  const guildId = interaction.guildId;
-  if (!guildId) {
-    await interaction.reply("このコマンドはギルド内でのみ実行できます。");
-    return;
-  }
-
-  const connection = getVoiceConnection(guildId);
-  if (!connection) {
-    await interaction.reply("ボイスチャンネルに接続してから開始してください。");
-    return;
-  }
-
-  const session = getVoiceSession(guildId);
-  const voiceChannelId = connection.joinConfig.channelId ?? session.voiceChannelId;
-  const guild = interaction.guild;
-  if (!guild || !voiceChannelId) {
-    await interaction.reply("ボイスチャンネルが特定できません。");
-    return;
-  }
-
-  const channel = guild.channels.cache.get(voiceChannelId);
-  if (!channel || !channel.isVoiceBased()) {
-    await interaction.reply("ボイスチャンネルが見つかりません。");
-    return;
-  }
-
-  const nonBotMembers = countNonBotMembers(channel);
-  if (nonBotMembers >= 2) {
-    await stopForMultiMember(interaction.client, guildId, nonBotMembers);
-    await interaction.reply("VC会話モードは1対1のときのみ開始できます。");
-    return;
-  }
-
-  updateVoiceSession(guildId, (session) => ({
-    ...session,
-    isVcModeRunning: true,
-    state: "IDLE",
-    stopReason: undefined,
-  }));
-  setupReceiver(interaction.client, guildId, connection);
-
-  await interaction.reply("VC会話モードを開始しました。");
-}
-
-export async function stopVcMode(interaction: ChatInputCommandInteraction): Promise<void> {
-  const guildId = interaction.guildId;
-  if (!guildId) {
-    await interaction.reply("このコマンドはギルド内でのみ実行できます。");
-    return;
-  }
-
-  updateVoiceSession(guildId, (session) => ({
-    ...session,
-    isVcModeRunning: false,
-    state: "IDLE",
-    stopReason: "MANUAL",
-    currentSpeakerId: undefined,
-    currentUtteranceId: undefined,
-  }));
-  stopActiveUtterance(guildId);
-  stopPlayback(guildId);
-
-  await interaction.reply("VC会話モードを停止しました。");
 }
 
 export async function skipPlayback(interaction: ChatInputCommandInteraction): Promise<void> {
