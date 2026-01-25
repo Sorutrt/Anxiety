@@ -1,8 +1,9 @@
 import { GenerateReplyArgs } from "./common";
 import { generateReply as generateGeminiReply } from "./gemini";
 import { generateReply as generateOllamaReply } from "./ollama";
+import { generateReply as generateOpenRouterReply } from "./openrouter";
 
-type LlmProvider = "gemini" | "ollama";
+type LlmProvider = "gemini" | "ollama" | "openrouter";
 
 type ParsedLlmConfig = {
   provider: LlmProvider;
@@ -16,7 +17,10 @@ function parseLlmSpec(spec: string): ParsedLlmConfig {
   if (separatorIndex > 0) {
     const prefix = trimmed.slice(0, separatorIndex).toLowerCase();
     const model = trimmed.slice(separatorIndex + 1).trim();
-    if ((prefix === "gemini" || prefix === "ollama") && model.length > 0) {
+    if (
+      (prefix === "gemini" || prefix === "ollama" || prefix === "openrouter") &&
+      model.length > 0
+    ) {
       return { provider: prefix, model };
     }
   }
@@ -29,6 +33,9 @@ export async function generateReply(args: GenerateReplyArgs): Promise<string> {
   const providerArgs = { ...args, model: parsed.model };
   if (parsed.provider === "ollama") {
     return await generateOllamaReply(providerArgs);
+  }
+  if (parsed.provider === "openrouter") {
+    return await generateOpenRouterReply(providerArgs);
   }
   return await generateGeminiReply(providerArgs);
 }

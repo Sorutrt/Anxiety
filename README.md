@@ -10,7 +10,7 @@ Windows + A.I.VOICE Editor 前提、1対1運用を想定しています。
 - [x] VC参加/退出、再生スキップ、履歴リセット
 - [x] VC音声受信と発話区切り（緑ランプベース）
 - [x] STT（openai-whisper）
-- [x] LLM（Ollama / Gemini）
+- [x] LLM（Ollama / Gemini / OpenRouter）
 - [x] A.I.VOICE 生成 + VC再生
 - [x] 1対1ガード、デバッグログ、フォールバック
 - [x] タイムアウト + リトライ（STT/LLM/TTS）
@@ -118,9 +118,12 @@ npm run start
 - `GUILD_ID` Discord server ID
 
 LLM:
-- `LLM_PROVIDER` `ollama` / `gemini`
-- `LLM_MODEL` モデル名（例: `qwen2.5:3b-instruct`）
+- `LLM_PROVIDER` `ollama` / `gemini` / `openrouter`
+- `OLLAMA_LLM_MODEL` モデル名（例: `qwen2.5:3b-instruct`）
+- `GEMINI_LLM_MODEL` モデル名（例: `gemini-2.5-flash-lite`）
+- `OPENROUTER_LLM_MODEL` モデル名（例: `google/gemma-3-27b-it:free`）
 - `GEMINI_API_KEY` Gemini 利用時のみ
+- `OPENROUTER_API_KEY` OpenRouter 利用時のみ
 
 STT(openai-whisper):
 - `OPENAI_WHISPER_PERSISTENT` `1`/`0`（常駐ワーカーの有効化）
