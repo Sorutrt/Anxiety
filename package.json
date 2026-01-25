@@ -19,6 +19,7 @@
   "type": "module",
   "scripts": {
     "test": "tsx ./src/main.ts",
+    "test:ollama": "node --test --import tsx ./src/llm/ollama.test.ts",
     "test:stt": "node --test --import tsx ./src/stt/openaiWhisper.test.ts",
     "test:stt:kotoba": "node --test --import tsx ./src/stt/kotobaWhisper.test.ts",
     "start": "node ./dist/main.js",
