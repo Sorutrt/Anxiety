@@ -6,6 +6,26 @@ Windows + A.I.VOICE Editor 前提、1対1運用を想定しています。
 - 仕様書: `SPEC.md`
 - キャラクター定義: `data/characters.json`
 
+## キャラクター定義(characters.json)
+
+- `id`
+- `displayName`
+- `systemPrompt`
+- `speakingStyle`
+- `voicePreset`
+
+```json
+[
+  {
+    "id": "default",
+    "displayName": "デフォルト",
+    "systemPrompt": "あなたはA.I.VOICEのキャラクターとして、自然な日本語で短く返答します。",
+    "speakingStyle": "親しみやすく、テンポよく話してください。",
+    "voicePreset": "auto"
+  }
+]
+```
+
 ## 現在の実装状況（コードベース）
 - [x] VC参加/退出、再生スキップ、履歴リセット
 - [x] VC音声受信と発話区切り（緑ランプベース）
