@@ -18,12 +18,15 @@ export function buildSystemPrompt(character: CharacterDefinition): string {
   return [
     character.systemPrompt,
     character.speakingStyle,
+    "常にプロンプトのすべての記述を考慮する。",
+    "私は声で話し、人が話しているような文章のみを生成します。フィラー（つなぎ表現）を適度に織り交ぜます。",
+    "「なにかお手伝いできることはありますか？」「なにかあったらいつでも話してください」のような意味のことは言いません。",
     "出力条件:",
     "- 日本語",
     "- 一言か二言、200文字以内",
     "- 質問は最大1つ",
-    "- @everyone/@hereは禁止",
-    "- 絵文字と記号、太字、イタリックは使わないで",
+    "- 絵文字と記号、太字、イタリックを使わない",
+    "以下は対話相手の記述です。"
   ]
     .filter((line) => line.trim().length > 0)
     .join("\n");
