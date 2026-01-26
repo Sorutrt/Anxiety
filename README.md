@@ -75,6 +75,29 @@ mise active
 npm install
 ```
 
+### 2.5. @discordjs/opus のビルド（Windows/Node20 で decode error が出る場合）
+Opus が `opusscript` にフォールバックすると「Invalid packet」が出やすいので、`@discordjs/opus` を使えるようにします。
+
+1) Visual Studio Build Tools 2022 をインストール  
+ワークロード「C++ によるデスクトップ開発」を選択し、`MSVC v143` / `Windows SDK` / `MSBuild` を含めます。
+
+2) `mise` で Python を入れて、このコマンドだけで指定
+```
+mise install python@3.11
+$py = "C:\Users\user\AppData\Local\mise\installs\python\3.11.14\python.exe"
+$env:npm_config_python=$py
+npm rebuild @discordjs/opus
+Remove-Item Env:npm_config_python
+```
+
+3) 動作確認（`@discordjs/opus` が出ること）
+```
+node -e "const prism=require('prism-media'); new prism.opus.Decoder({rate:48000,channels:2,frameSize:960}); console.log(prism.opus.Decoder.type)"
+```
+
+※ Python のパスは環境で変わるため適宜読み替えてください。  
+※ Python は `mise use` で常時有効にしなくてもOKです（tools/ 以下の Python と分離できます）。
+
 ### 3. 環境変数
 `.env.example` をコピーして `.env` を作成し、必須項目を設定します。
 
@@ -203,3 +226,6 @@ cd ..\..
 
 ## ライセンス
 `LICENSE` を参照してください。
+
+
+

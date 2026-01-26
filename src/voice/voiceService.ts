@@ -18,6 +18,7 @@ import {
 } from "discord.js";
 import fs from "fs";
 import path from "path";
+import { createRequire } from "module";
 import {
   CONTEXT_TURNS,
   DEBUG_NOTICE_TEXT,
@@ -44,6 +45,7 @@ import { SpeechIndicatorState } from "./speechIndicatorState";
 
 const audioPlayers = new Map<string, AudioPlayer>();
 const receiverInitialized = new Set<string>();
+const require = createRequire(import.meta.url);
 // 緑ランプの点灯/消灯に基づく発話判定と録音状態をまとめて管理する。
 type ReceiverStream = NodeJS.ReadableStream & { destroy: () => void };
 type RecordingContext = {
@@ -66,6 +68,29 @@ type ActiveUtterance = {
 };
 const activeUtterances = new Map<string, ActiveUtterance>();
 const recordingDir = path.resolve(process.cwd(), "voice", "recorded");
+const opusModuleLogState = { logged: false };
+
+// Opus実装の種類を1回だけログして、フォールバック時の原因調査を容易にする。
+function logOpusModuleType(): void {
+  if (opusModuleLogState.logged) {
+    return;
+  }
+  opusModuleLogState.logged = true;
+  const decoderType = prism.opus.Decoder.type;
+  if (decoderType === "@discordjs/opus") {
+    console.log(`[VOICE] Opus module: ${decoderType}`);
+    return;
+  }
+  console.warn(
+    `[VOICE] Opus module fallback: ${decoderType ?? "unknown"} (expected @discordjs/opus).`
+  );
+  try {
+    require("@discordjs/opus");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[VOICE] @discordjs/opus load error: ${message}`);
+  }
+}
 
 function ensureRecordingDir(): void {
   if (!fs.existsSync(recordingDir)) {
@@ -489,6 +514,7 @@ function startRecording(
     channels: 2,
     frameSize: 960,
   });
+  logOpusModuleType();
   const chunks: Buffer[] = [];
   const startedAt = Date.now();
   const maxTimer = setTimeout(
@@ -504,6 +530,30 @@ function startRecording(
     decoder,
     maxTimer,
     finished: false,
+  };
+
+  // 受信・デコード異常時に録音ストリームを安全に停止する。
+  const abortRecording = (message: string, error: unknown) => {
+    if (recording.finished) {
+      return;
+    }
+    recording.finished = true;
+    clearTimeout(recording.maxTimer);
+    try {
+      receiverStream.unpipe(decoder);
+    } catch {
+      // 既に解除済みの場合は無視する。
+    }
+    decoder.destroy();
+    receiverStream.destroy();
+    console.error(message, error);
+    updateVoiceSession(guildId, (current) => ({
+      ...current,
+      state: "IDLE",
+      currentSpeakerId: undefined,
+      currentUtteranceId: undefined,
+    }));
+    clearActiveUtterance(guildId, utteranceId);
   };
 
   receiverStream.pipe(decoder);
@@ -528,29 +578,11 @@ function startRecording(
   receiverStream.on("close", finalizeOnce);
 
   receiverStream.on("error", (error) => {
-    clearTimeout(recording.maxTimer);
-    recording.finished = true;
-    console.error("音声受信エラー:", error);
-    updateVoiceSession(guildId, (current) => ({
-      ...current,
-      state: "IDLE",
-      currentSpeakerId: undefined,
-      currentUtteranceId: undefined,
-    }));
-    clearActiveUtterance(guildId, utteranceId);
+    abortRecording("音声受信エラー:", error);
   });
 
   decoder.on("error", (error) => {
-    clearTimeout(recording.maxTimer);
-    recording.finished = true;
-    console.error("Opusのデコードに失敗しました:", error);
-    updateVoiceSession(guildId, (current) => ({
-      ...current,
-      state: "IDLE",
-      currentSpeakerId: undefined,
-      currentUtteranceId: undefined,
-    }));
-    clearActiveUtterance(guildId, utteranceId);
+    abortRecording("Opusのデコードに失敗しました:", error);
   });
 
   return recording;
