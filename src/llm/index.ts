@@ -10,6 +10,12 @@ type ParsedLlmConfig = {
   model: string;
 };
 
+// OpenRouter失敗時のGeminiフォールバックモデルを解決する。
+function resolveGeminiFallbackModel(): string {
+  const raw = process.env.GEMINI_LLM_MODEL?.trim();
+  return raw && raw.length > 0 ? raw : "gemini-2.5-flash-lite";
+}
+
 // LLMの指定文字列からプロバイダとモデル名を抽出する。
 function parseLlmSpec(spec: string): ParsedLlmConfig {
   const trimmed = spec.trim();
@@ -35,7 +41,12 @@ export async function generateReply(args: GenerateReplyArgs): Promise<string> {
     return await generateOllamaReply(providerArgs);
   }
   if (parsed.provider === "openrouter") {
-    return await generateOpenRouterReply(providerArgs);
+    try {
+      return await generateOpenRouterReply(providerArgs);
+    } catch (error) {
+      const fallbackModel = resolveGeminiFallbackModel();
+      return await generateGeminiReply({ ...args, model: fallbackModel });
+    }
   }
   return await generateGeminiReply(providerArgs);
 }
