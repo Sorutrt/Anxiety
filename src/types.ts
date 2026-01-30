@@ -48,5 +48,9 @@ export type CharacterDefinition = {
   displayName: string;
   systemPrompt: string;
   speakingStyle: string;
+  openrouterParams?: {
+    temperature?: number;
+    max_tokens?: number;
+  };
   voicePreset: string;
 };
