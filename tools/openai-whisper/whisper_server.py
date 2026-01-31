@@ -14,7 +14,7 @@ def write_json(payload: dict[str, Any]) -> None:
 # Serve JSON requests over stdin/stdout for a persistent STT worker.
 def main() -> int:
     parser = argparse.ArgumentParser(description="OpenAI-Whisper Server")
-    parser.add_argument("--model", default="base")
+    parser.add_argument("--model", default="small")
     args = parser.parse_args()
 
     configure_stdio()

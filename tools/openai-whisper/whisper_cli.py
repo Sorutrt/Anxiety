@@ -7,7 +7,7 @@ from whisper_core import build_model_context, configure_stdio, transcribe_audio
 def main() -> int:
     parser = argparse.ArgumentParser(description="OpenAI-Whisper CLI")
     parser.add_argument("input", help="Input WAV file path")
-    parser.add_argument("--model", default="base")
+    parser.add_argument("--model", default="small")
     args = parser.parse_args()
 
     configure_stdio()
