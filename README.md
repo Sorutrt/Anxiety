@@ -214,7 +214,6 @@ cd ..\..
 
 ### テスト
 - `npm run test:stt` openai-whisper のSTTテスト
-- `npm run test:stt:kotoba` kotoba-whisper のSTTテスト
 - `npm run test:ollama` Ollama応答テスト
 
 各テストは `STT_TEST_AUDIO_PATH` などの環境変数が必要です。詳細はテストファイルを参照してください。
