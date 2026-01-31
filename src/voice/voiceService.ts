@@ -42,6 +42,7 @@ import { ensureOllamaRunning, stopOllamaServer } from "../llm/ollamaManager";
 import { transcribeAudio } from "../stt/openaiWhisper";
 import { retryOnce, withTimeout } from "../utils/async";
 import { SpeechIndicatorState } from "./speechIndicatorState";
+import { normalizeSttText } from "./sttText";
 
 const audioPlayers = new Map<string, AudioPlayer>();
 const receiverInitialized = new Set<string>();
@@ -683,20 +684,27 @@ async function processUtterance(
   await maybeSendDebugNotice(client, guildId);
 
   let text: string | null = null;
+  let sttFailed = false;
   const sttStart = Date.now();
   try {
     console.log(`[STT] 音声をSTTに投げた path=${wavPath}`);
     const rawText = await transcribeAudio(wavPath, guildId);
-    text = rawText.trim();
-    console.log(`[STT] 認識結果 text="${text}"`);
+    text = normalizeSttText(rawText);
+    console.log(`[STT] 認識結果 text="${text ?? ""}"`);
     console.log(`[PIPELINE] STT=done LLM=waiting TTS=waiting`);
   } catch (error) {
+    sttFailed = true;
     console.error("STTエラー:", error);
   }
   const sttTime = Date.now() - sttStart;
 
-  if (!text) {
+  if (sttFailed) {
     await speakFallback(client, guildId, STT_FALLBACK_TEXT);
+    resetSessionAfterTurn(guildId);
+    return;
+  }
+
+  if (text === null) {
     resetSessionAfterTurn(guildId);
     return;
   }
