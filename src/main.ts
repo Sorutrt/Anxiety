@@ -20,10 +20,15 @@ import { fileURLToPath } from "url";
 import { handleVoiceStateUpdate } from "./voice/voiceService";
 import { initializeKotobaWhisperPool } from "./stt/openaiWhisper";
 import { registerOllamaShutdownHandlers } from "./llm/ollamaManager";
+import { initializeAivoiceOnStartup } from "./aivoice";
 
 //.envファイルを読み込む
 dotenv.config()
 registerOllamaShutdownHandlers()
+
+void initializeAivoiceOnStartup().catch((error) => {
+  console.error("A.I.VOICEの起動に失敗しました:", error);
+});
 
 void initializeKotobaWhisperPool().catch((error) => {
   console.error("STT初期化に失敗しました:", error);
