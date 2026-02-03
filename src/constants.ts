@@ -14,7 +14,7 @@ export const LLM_TIMEOUT_SEC = 10;
 // TTS処理のタイムアウト秒数。
 export const TTS_TIMEOUT_SEC = 12;
 // Ollamaのコンテキストウィンドウ（トークン数）。
-export const OLLAMA_NUM_CTX = 1024;
+export const OLLAMA_NUM_CTX = 2048;
 
 // 会話履歴として保持する往復ターン数。
 export const CONTEXT_TURNS = 10;
