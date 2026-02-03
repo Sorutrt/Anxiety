@@ -17,7 +17,7 @@ import { debugCommandData, handleDebugCommand } from "./commands/debug";
 import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url";
-import { handleVoiceStateUpdate } from "./voice/voiceService";
+import { handleTextMessageCreate, handleVoiceStateUpdate } from "./voice/voiceService";
 import { initializeKotobaWhisperPool } from "./stt/openaiWhisper";
 import { registerOllamaShutdownHandlers } from "./llm/ollamaManager";
 import { initializeAivoiceOnStartup } from "./aivoice";
@@ -75,6 +75,11 @@ client.once('ready', () => {
 // VCの参加人数ガード
 client.on(Events.VoiceStateUpdate, (_, newState) => {
   handleVoiceStateUpdate(client, newState);
+});
+
+// テキスト投稿を拾ってVCに流す
+client.on(Events.MessageCreate, (message) => {
+  void handleTextMessageCreate(client, message);
 });
 
 // スラッシュコマンド

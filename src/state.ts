@@ -75,6 +75,7 @@ export function getVoiceSession(guildId: string, voiceChannelId?: string): Voice
   const session: VoiceSession = {
     guildId,
     voiceChannelId: voiceChannelId ?? "",
+    textChannelId: undefined,
     characterId: config.defaultCharacterId,
     state: "IDLE",
     history: [],

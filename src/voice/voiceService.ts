@@ -16,6 +16,7 @@ import {
   VoiceBasedChannel,
   VoiceState,
 } from "discord.js";
+import type { Message } from "discord.js";
 import fs from "fs";
 import path from "path";
 import { createRequire } from "module";
@@ -43,6 +44,13 @@ import { transcribeAudio } from "../stt/openaiWhisper";
 import { retryOnce, withTimeout } from "../utils/async";
 import { SpeechIndicatorState } from "./speechIndicatorState";
 import { normalizeSttText } from "./sttText";
+import {
+  createTextQueueState,
+  enqueueTextQueue,
+  peekTextQueue,
+  shiftTextQueue,
+} from "./textQueue";
+import type { TextQueueState } from "./textQueue";
 
 const audioPlayers = new Map<string, AudioPlayer>();
 const receiverInitialized = new Set<string>();
@@ -70,6 +78,17 @@ type ActiveUtterance = {
 const activeUtterances = new Map<string, ActiveUtterance>();
 const recordingDir = path.resolve(process.cwd(), "voice", "recorded");
 const opusModuleLogState = { logged: false };
+const textQueueStates = new Map<string, TextQueueState<TextQueueItem>>();
+const textQueueRetryMs = 200;
+
+type TextQueueItem = {
+  guildId: string;
+  channelId: string;
+  messageId: string;
+  userId: string;
+  text: string;
+  createdAt: number;
+};
 
 // Opus実装の種類を1回だけログして、フォールバック時の原因調査を容易にする。
 function logOpusModuleType(): void {
@@ -96,6 +115,25 @@ function logOpusModuleType(): void {
 function ensureRecordingDir(): void {
   if (!fs.existsSync(recordingDir)) {
     fs.mkdirSync(recordingDir, { recursive: true });
+  }
+}
+
+// ギルドごとのテキスト処理キューを初期化・取得する。
+function getTextQueueState(guildId: string): TextQueueState<TextQueueItem> {
+  const existing = textQueueStates.get(guildId);
+  if (existing) {
+    return existing;
+  }
+  const state = createTextQueueState<TextQueueItem>();
+  textQueueStates.set(guildId, state);
+  return state;
+}
+
+// キューを空にして古いテキスト入力を破棄する。
+function clearTextQueue(guildId: string): void {
+  const state = textQueueStates.get(guildId);
+  if (state) {
+    state.items = [];
   }
 }
 
@@ -159,6 +197,10 @@ export async function joinVoiceChannelFromInteraction(
         });
 
   const session = getVoiceSession(guild.id, voiceChannel.id);
+  updateVoiceSession(guild.id, (current) => ({
+    ...current,
+    textChannelId: interaction.channelId,
+  }));
   getOrCreateAudioPlayer(guild.id);
   setupReceiver(interaction.client, guild.id, connection);
 
@@ -208,7 +250,9 @@ export async function leaveVoiceChannel(
     stopReason: "MANUAL",
     currentSpeakerId: undefined,
     currentUtteranceId: undefined,
+    textChannelId: undefined,
   }));
+  clearTextQueue(guildId);
   stopActiveUtterance(guildId);
   connection.destroy();
   receiverInitialized.delete(guildId);
@@ -274,6 +318,64 @@ export function handleVoiceStateUpdate(client: Client, state: VoiceState): void 
   }
 }
 
+// テキスト投稿をVC再生に流すための入口で、条件を満たすメッセージだけキューに積む。
+export async function handleTextMessageCreate(
+  client: Client,
+  message: Message
+): Promise<void> {
+  if (!message.guildId) {
+    return;
+  }
+  if (message.author.bot) {
+    return;
+  }
+  if (!message.inGuild()) {
+    return;
+  }
+
+  const session = getVoiceSession(message.guildId);
+  if (!session.textChannelId || session.textChannelId !== message.channelId) {
+    return;
+  }
+  if (!session.isVcModeRunning) {
+    return;
+  }
+
+  const connection = getVoiceConnection(message.guildId);
+  if (!connection) {
+    return;
+  }
+
+  const member = message.member;
+  if (!(member instanceof GuildMember)) {
+    return;
+  }
+  const voiceChannelId = connection.joinConfig.channelId ?? session.voiceChannelId;
+  if (!voiceChannelId || member.voice.channelId !== voiceChannelId) {
+    return;
+  }
+
+  const userText = message.cleanContent.replace(/\s+/g, " ").trim();
+  if (!userText) {
+    return;
+  }
+
+  const queueState = getTextQueueState(message.guildId);
+  const accepted = enqueueTextQueue(queueState, {
+    guildId: message.guildId,
+    channelId: message.channelId,
+    messageId: message.id,
+    userId: message.author.id,
+    text: userText,
+    createdAt: message.createdTimestamp,
+  });
+  if (!accepted) {
+    return;
+  }
+
+  void processTextQueue(client, message.guildId);
+}
+
 function setupReceiver(client: Client, guildId: string, connection: VoiceConnection): void {
   if (receiverInitialized.has(guildId)) {
     console.log(`[VOICE] receiver already initialized guild=${guildId}`);
@@ -310,6 +412,7 @@ async function stopForMultiMember(
     currentSpeakerId: undefined,
     currentUtteranceId: undefined,
   }));
+  clearTextQueue(guildId);
   stopActiveUtterance(guildId);
   stopPlayback(guildId);
   await logDebug(client, guildId, 1, `[GUARD] stop reason=MULTI_MEMBER nonBot=${nonBotMembers}`);
@@ -321,6 +424,131 @@ async function stopForMultiMember(
     }
   }
   await stopOllamaServer();
+}
+
+// テキスト入力のキューを順番に処理して、VC再生まで流す。
+async function processTextQueue(client: Client, guildId: string): Promise<void> {
+  const state = getTextQueueState(guildId);
+  if (state.processing) {
+    return;
+  }
+  state.processing = true;
+
+  try {
+    while (true) {
+      const next = peekTextQueue(state);
+      if (!next) {
+        break;
+      }
+      const ready = await waitForTextQueueReady(guildId);
+      if (!ready) {
+        clearTextQueue(guildId);
+        break;
+      }
+      const item = shiftTextQueue(state);
+      if (!item) {
+        continue;
+      }
+      const result = await processTextQueueItem(client, item);
+      if (result === "retry") {
+        state.items.unshift(item);
+        await new Promise((resolve) => setTimeout(resolve, textQueueRetryMs));
+      }
+    }
+  } finally {
+    state.processing = false;
+    if (state.items.length > 0) {
+      void processTextQueue(client, guildId);
+    }
+  }
+}
+
+// セッションがIDLEになるまで待ち、処理継続できるか判定する。
+async function waitForTextQueueReady(guildId: string): Promise<boolean> {
+  while (true) {
+    const session = getVoiceSession(guildId);
+    if (!session.isVcModeRunning || !session.textChannelId) {
+      return false;
+    }
+    if (session.state === "IDLE") {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, textQueueRetryMs));
+  }
+}
+
+// 1件分のテキスト入力をLLM/TTSに流して再生する。
+async function processTextQueueItem(
+  client: Client,
+  item: TextQueueItem
+): Promise<"processed" | "retry" | "drop"> {
+  const session = getVoiceSession(item.guildId);
+  if (!session.isVcModeRunning || !session.textChannelId) {
+    return "drop";
+  }
+  if (session.textChannelId !== item.channelId) {
+    return "drop";
+  }
+  if (session.state !== "IDLE") {
+    return "retry";
+  }
+
+  const connection = getVoiceConnection(item.guildId);
+  if (!connection) {
+    return "drop";
+  }
+  const voiceChannelId = connection.joinConfig.channelId ?? session.voiceChannelId;
+  if (!voiceChannelId) {
+    return "drop";
+  }
+
+  const guild =
+    client.guilds.cache.get(item.guildId) ??
+    (await client.guilds.fetch(item.guildId).catch(() => null));
+  if (!guild) {
+    return "drop";
+  }
+  const member = await guild.members.fetch(item.userId).catch(() => null);
+  if (!member || member.voice.channelId !== voiceChannelId) {
+    return "drop";
+  }
+
+  updateVoiceSession(item.guildId, (current) => {
+    const userHistory: ConversationTurn[] = [
+      ...current.history,
+      { role: "user" as const, text: item.text, at: Date.now() },
+    ].slice(-CONTEXT_TURNS * 2);
+    return {
+      ...current,
+      state: "THINKING",
+      history: userHistory,
+    };
+  });
+
+  try {
+    const reply = await generateReplyFromLlm(item.guildId, item.text);
+    if (!reply) {
+      await speakFallback(client, item.guildId, GENERAL_FALLBACK_TEXT);
+      return "processed";
+    }
+
+    updateVoiceSession(item.guildId, (current) => {
+      const assistantHistory: ConversationTurn[] = [
+        ...current.history,
+        { role: "assistant" as const, text: reply, at: Date.now() },
+      ].slice(-CONTEXT_TURNS * 2);
+      return {
+        ...current,
+        state: "SPEAKING",
+        history: assistantHistory,
+      };
+    });
+
+    await speakText(client, item.guildId, connection, reply);
+    return "processed";
+  } finally {
+    resetSessionAfterTurn(item.guildId);
+  }
 }
 
 async function handleSpeechStart(

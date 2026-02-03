@@ -33,6 +33,7 @@ export type GuildConfig = {
 export type VoiceSession = {
   guildId: string;
   voiceChannelId: string;
+  textChannelId?: string;
   characterId: string;
   state: VoiceState;
   history: ConversationTurn[];
