@@ -169,6 +169,8 @@ dist
 
 ### python ###
 build/config.gypi
+__pycache__/
+*.py[cod]
 
 ### VisualStudioCode ###
 .vscode/*
