@@ -18,7 +18,7 @@ import fs from "fs"
 import path from "path"
 import { fileURLToPath } from "url";
 import { handleTextMessageCreate, handleVoiceStateUpdate } from "./voice/voiceService";
-import { initializeKotobaWhisperPool } from "./stt/openaiWhisper";
+import { initializeMoonshineVoicePool } from "./stt/moonshineVoice";
 import { registerOllamaShutdownHandlers } from "./llm/ollamaManager";
 import { initializeAivoiceOnStartup } from "./aivoice";
 
@@ -30,7 +30,7 @@ void initializeAivoiceOnStartup().catch((error) => {
   console.error("A.I.VOICEの起動に失敗しました:", error);
 });
 
-void initializeKotobaWhisperPool().catch((error) => {
+void initializeMoonshineVoicePool().catch((error) => {
   console.error("STT初期化に失敗しました:", error);
 });
 

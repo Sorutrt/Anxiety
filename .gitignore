@@ -13,6 +13,13 @@ tools/kotoba-whisper/cache/
 tools/kotoba-whisper/.cache/
 tools/kotoba-whisper/__pycache__/
 
+### moonshine-voice ###
+tools/moonshine-voice/.venv/
+tools/moonshine-voice/cache/
+tools/moonshine-voice/.cache/
+tools/moonshine-voice/models/
+tools/moonshine-voice/__pycache__/
+
 ### ollama ###
 tools/ollama/*.exe
 tools/ollama/*.dll

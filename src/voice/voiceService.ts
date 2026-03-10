@@ -42,7 +42,7 @@ import type { SpeechIndicatorResult } from "./speechIndicatorState";
 import { textToSaveWav } from "../aivoice";
 import { generateReply } from "../llm";
 import { ensureOllamaRunning, stopOllamaServer } from "../llm/ollamaManager";
-import { transcribeAudio } from "../stt/openaiWhisper";
+import { transcribeAudio } from "../stt/moonshineVoice";
 import { retryOnce, withTimeout } from "../utils/async";
 import { SpeechIndicatorState } from "./speechIndicatorState";
 import { normalizeSttText } from "./sttText";

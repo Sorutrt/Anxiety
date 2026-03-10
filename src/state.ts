@@ -41,7 +41,7 @@ export function getGuildConfig(guildId: string): GuildConfig {
     defaultCharacterId,
     debugLevel: 0,
     providers: {
-      stt: "openai-whisper",
+      stt: "moonshine-voice",
       llm: resolveDefaultLlmSpec(),
       tts: "aivoice",
     },

@@ -29,7 +29,7 @@ Windows + A.I.VOICE Editor 前提、1対1運用を想定しています。
 ## 現在の実装状況（コードベース）
 - [x] VC参加/退出、再生スキップ、履歴リセット
 - [x] VC音声受信と発話区切り（緑ランプベース）
-- [x] STT（openai-whisper）
+- [x] STT（Moonshine Voice）
 - [x] LLM（Ollama / Gemini / OpenRouter）
 - [x] A.I.VOICE 生成 + VC再生
 - [x] 1対1ガード、デバッグログ、フォールバック
@@ -108,11 +108,12 @@ node -e "const prism=require('prism-media'); new prism.opus.Decoder({rate:48000,
 copy .env.example .env
 ```
 
-### 4. openai-whisper の準備
-`tools/openai-whisper` で Python 依存を入れます。
+### 4. Moonshine Voice の準備
+`tools/moonshine-voice` で Python 依存を入れ、日本語モデルを取得します。
 
 ```
-uv sync --project .\tools\openai-whisper
+uv sync --project .\tools\moonshine-voice
+uv run --project .\tools\moonshine-voice python -m moonshine_voice.download ja
 ```
 
 ### 5. Ollama（ローカルLLMを使う場合）
@@ -174,15 +175,15 @@ LLM:
 - `GEMINI_API_KEY` 条件付き必須。Gemini 利用時のみ必要
 - `OPENROUTER_API_KEY` 条件付き必須。OpenRouter 利用時のみ必要
 
-STT(openai-whisper):
-- `OPENAI_WHISPER_PERSISTENT` 任意。`1` / `0`。未指定時は有効
-- `OPENAI_WHISPER_WORKERS` 任意。常駐ワーカー数。未指定時は `1`
-- `OPENAI_WHISPER_BIN` 条件付き任意。常駐ワーカーを使わない場合の CLI パス
-- `OPENAI_WHISPER_UV_BIN` 任意。`uv` 実行ファイルのパス
-- `OPENAI_WHISPER_UV_PROJECT` 任意。`tools/openai-whisper` 以外を使う場合のプロジェクトパス
-- `OPENAI_WHISPER_ARGS` 任意。追加引数
-- `OPENAI_WHISPER_TIMEOUT_SEC` 任意。タイムアウト秒
-- `OPENAI_WHISPER_DEBUG` 任意。`1` で詳細ログ
+STT(Moonshine Voice):
+- `MOONSHINE_VOICE_PERSISTENT` 任意。`1` / `0`。未指定時は有効
+- `MOONSHINE_VOICE_WORKERS` 任意。常駐ワーカー数。未指定時は `1`
+- `MOONSHINE_VOICE_BIN` 条件付き任意。常駐ワーカーを使わない場合の CLI パス
+- `MOONSHINE_VOICE_UV_BIN` 任意。`uv` 実行ファイルのパス
+- `MOONSHINE_VOICE_UV_PROJECT` 任意。`tools/moonshine-voice` 以外を使う場合のプロジェクトパス
+- `MOONSHINE_VOICE_ARGS` 任意。追加引数
+- `MOONSHINE_VOICE_TIMEOUT_SEC` 任意。タイムアウト秒
+- `MOONSHINE_VOICE_DEBUG` 任意。`1` で詳細ログ
 
 ※ `.env.example` も参照してください。
 
@@ -216,7 +217,7 @@ cd ..\..
 ```
 
 ### テスト
-- `npm run test:stt` openai-whisper のSTTテスト
+- `npm run test:stt` Moonshine Voice のSTTテスト
 - `npm run test:ollama` Ollama応答テスト
 
 各テストは `STT_TEST_AUDIO_PATH` などの環境変数が必要です。詳細はテストファイルを参照してください。
