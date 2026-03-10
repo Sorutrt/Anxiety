@@ -39,7 +39,7 @@ Windows + A.I.VOICE Editor 前提、1対1運用を想定しています。
 
 ## 必要環境
 - Windows（A.I.VOICE Editor / winax）
-- Node.js 20（`mise` 推奨）
+- Node.js 22.12.0 以上（`@discordjs/voice` の DAVE 対応に必要、`mise` 推奨）
 - Python 3.12（`uv` 推奨）
 - Discord Bot のトークン
 
@@ -53,6 +53,9 @@ Node と Python を準備します。
 mise install
 uv python install 3.12.12
 ```
+
+2026-03-03 以降、Discord の非 Stage VC は DAVE 必須になったため、このプロジェクトも
+`@discordjs/voice` の DAVE 対応版と Node.js 22.12.0 以上を前提にしています。
 
 ### 1. Discord Bot の作成
 Discord Developer Portal で bot を作成します。
@@ -75,7 +78,7 @@ mise active
 npm install
 ```
 
-### 2.5. @discordjs/opus のビルド（Windows/Node20 で decode error が出る場合）
+### 2.5. @discordjs/opus のビルド（Windows/Node22 で decode error が出る場合）
 Opus が `opusscript` にフォールバックすると「Invalid packet」が出やすいので、`@discordjs/opus` を使えるようにします。
 
 1) Visual Studio Build Tools 2022 をインストール  
@@ -208,7 +211,7 @@ $env:npm_config_python = $py
 $env:Path = (Split-Path $py) + ";" + $env:Path
 
 cd .\node_modules\winax
-node "C:\Users\user\AppData\Local\mise\installs\node\20.11.0\node_modules\npm\node_modules\node-gyp\bin\node-gyp.js" rebuild --python "$py"
+npm exec -- node-gyp rebuild --python "$py"
 cd ..\..
 ```
 

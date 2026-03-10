@@ -3,8 +3,10 @@ import {
   AudioPlayerStatus,
   EndBehaviorType,
   VoiceConnection,
+  VoiceConnectionStatus,
   createAudioPlayer,
   createAudioResource,
+  entersState,
   getVoiceConnection,
   joinVoiceChannel,
 } from "@discordjs/voice";
@@ -54,6 +56,10 @@ import type { TextQueueState } from "./textQueue";
 
 const audioPlayers = new Map<string, AudioPlayer>();
 const receiverInitialized = new Set<string>();
+const observedConnections = new WeakSet<VoiceConnection>();
+const observedNetworkings = new WeakSet<object>();
+const observedVoiceSockets = new WeakSet<object>();
+const observedUdpSockets = new WeakSet<object>();
 const require = createRequire(import.meta.url);
 // 緑ランプの点灯/消灯に基づく発話判定と録音状態をまとめて管理する。
 type ReceiverStream = NodeJS.ReadableStream & { destroy: () => void };
@@ -193,6 +199,7 @@ export async function joinVoiceChannelFromInteraction(
           channelId: voiceChannel.id,
           guildId: voiceChannel.guild.id,
           adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+          debug: true,
           selfDeaf: false,
         });
 
@@ -202,6 +209,18 @@ export async function joinVoiceChannelFromInteraction(
     textChannelId: interaction.channelId,
   }));
   getOrCreateAudioPlayer(guild.id);
+  observeVoiceConnection(guild.id, connection);
+  try {
+    await ensureVoiceConnectionReady(guild.id, connection);
+  } catch (error) {
+    console.error(`[VOICE] connection ready timeout guild=${guild.id}`, error);
+    connection.destroy();
+    receiverInitialized.delete(guild.id);
+    await interaction.editReply(
+      "ボイス接続の確立に失敗しました。Bot の Connect/Speak 権限と VC の接続状態を確認してから再度試してください。"
+    );
+    return;
+  }
   setupReceiver(interaction.client, guild.id, connection);
 
   const nonBotMembers = countNonBotMembers(voiceChannel);
@@ -374,6 +393,138 @@ export async function handleTextMessageCreate(
   }
 
   void processTextQueue(client, message.guildId);
+}
+
+// VoiceConnection の状態遷移を 1 回だけ記録して、接続不良を追跡しやすくする。
+function observeVoiceConnection(guildId: string, connection: VoiceConnection): void {
+  if (observedConnections.has(connection)) {
+    return;
+  }
+
+  observedConnections.add(connection);
+  console.log(
+    `[VOICE] connection state initial guild=${guildId} status=${connection.state.status}`
+  );
+  connection.on("debug", (message) => {
+    console.log(`[VOICE][debug] guild=${guildId} ${message}`);
+  });
+  connection.on("error", (error) => {
+    console.error(`[VOICE][error] guild=${guildId}`, error);
+  });
+  connection.on("stateChange", (oldState, newState) => {
+    console.log(
+      `[VOICE] connection state guild=${guildId} ${oldState.status} -> ${newState.status}`
+    );
+    observeNetworking(guildId, newState);
+  });
+  observeNetworking(guildId, connection.state);
+}
+
+// join 後に受信を始める前提として、VoiceConnection が Ready になるまで待つ。
+async function ensureVoiceConnectionReady(
+  guildId: string,
+  connection: VoiceConnection
+): Promise<void> {
+  if (connection.state.status === VoiceConnectionStatus.Ready) {
+    console.log(`[VOICE] connection ready guild=${guildId}`);
+    return;
+  }
+
+  console.log(
+    `[VOICE] waiting for ready guild=${guildId} status=${connection.state.status}`
+  );
+  await entersState(connection, VoiceConnectionStatus.Ready, 15_000);
+  console.log(`[VOICE] connection ready guild=${guildId}`);
+}
+
+// VoiceConnection が抱える内部 networking と socket を覗いて、close code まで記録する。
+function observeNetworking(guildId: string, state: object): void {
+  const networking = Reflect.get(state, "networking");
+  if (!networking || typeof networking !== "object") {
+    return;
+  }
+  if (observedNetworkings.has(networking)) {
+    observeNetworkingTransports(guildId, Reflect.get(networking, "state"));
+    return;
+  }
+
+  observedNetworkings.add(networking);
+  if (typeof Reflect.get(networking, "on") === "function") {
+    Reflect.apply(Reflect.get(networking, "on"), networking, [
+      "close",
+      (code: number) => {
+        console.log(`[VOICE][nw-close] guild=${guildId} code=${code}`);
+      },
+    ]);
+    Reflect.apply(Reflect.get(networking, "on"), networking, [
+      "error",
+      (error: unknown) => {
+        console.error(`[VOICE][nw-error] guild=${guildId}`, error);
+      },
+    ]);
+    Reflect.apply(Reflect.get(networking, "on"), networking, [
+      "stateChange",
+      (_oldState: unknown, newState: unknown) => {
+        if (newState && typeof newState === "object") {
+          observeNetworkingTransports(guildId, newState as object);
+        }
+      },
+    ]);
+  }
+  observeNetworkingTransports(guildId, Reflect.get(networking, "state"));
+}
+
+// networking 配下の VoiceWebSocket / UDP socket を監視して、閉じ方を特定する。
+function observeNetworkingTransports(guildId: string, state: unknown): void {
+  if (!state || typeof state !== "object") {
+    return;
+  }
+
+  const ws = Reflect.get(state, "ws");
+  if (ws && typeof ws === "object" && !observedVoiceSockets.has(ws)) {
+    observedVoiceSockets.add(ws);
+    if (typeof Reflect.get(ws, "on") === "function") {
+      Reflect.apply(Reflect.get(ws, "on"), ws, [
+        "close",
+        (event: { code?: number; reason?: string | Buffer }) => {
+          const reason =
+            typeof event?.reason === "string"
+              ? event.reason
+              : Buffer.isBuffer(event?.reason)
+                ? event.reason.toString("utf8")
+                : "";
+          console.log(
+            `[VOICE][ws-close] guild=${guildId} code=${event?.code ?? "unknown"} reason=${reason}`
+          );
+        },
+      ]);
+      Reflect.apply(Reflect.get(ws, "on"), ws, [
+        "error",
+        (error: unknown) => {
+          console.error(`[VOICE][ws-error] guild=${guildId}`, error);
+        },
+      ]);
+    }
+  }
+
+  const udp = Reflect.get(state, "udp");
+  if (udp && typeof udp === "object" && !observedUdpSockets.has(udp)) {
+    observedUdpSockets.add(udp);
+    if (typeof Reflect.get(udp, "on") === "function") {
+      Reflect.apply(Reflect.get(udp, "on"), udp, [
+        "close",
+        () => {
+          console.log(`[VOICE][udp-close] guild=${guildId}`);
+        },
+      ]);
+      Reflect.apply(Reflect.get(udp, "on"), udp, [
+        "error",
+        (error: unknown) => {
+          console.error(`[VOICE][udp-error] guild=${guildId}`, error);
+        },
+      ]);
+    }
+  }
 }
 
 function setupReceiver(client: Client, guildId: string, connection: VoiceConnection): void {
