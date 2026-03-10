@@ -102,7 +102,7 @@ node -e "const prism=require('prism-media'); new prism.opus.Decoder({rate:48000,
 ※ Python は `mise use` で常時有効にしなくてもOKです（tools/ 以下の Python と分離できます）。
 
 ### 3. 環境変数
-`.env.example` をコピーして `.env` を作成し、必須項目を設定します。
+`.env.example` をコピーして `.env` を作成し、必須項目と必要な条件付き項目を設定します。
 
 ```
 copy .env.example .env
@@ -159,30 +159,30 @@ npm run start
 
 ## 環境変数
 必須:
-- `TOKEN` Discord bot token
-- `CLIENT_ID` Discord application client ID
-- `GUILD_ID` Discord server ID
+- `TOKEN` Discord Bot のトークン
+- `CLIENT_ID` Discord アプリケーションのクライアント ID
+- `GUILD_ID` コマンドを登録する Discord サーバー ID
+
+任意:
+- `PERMITTED_USERS` 将来的な運用ガード用のユーザー ID 一覧（カンマ区切り、現在の実装では未使用）
 
 LLM:
-- `LLM_PROVIDER` `ollama` / `gemini` / `openrouter`
-- `OLLAMA_LLM_MODEL` モデル名（例: `qwen2.5:3b-instruct`）
-- `GEMINI_LLM_MODEL` モデル名（例: `gemini-2.5-flash-lite`）
-- `OPENROUTER_LLM_MODEL` モデル名（例: `google/gemma-3-27b-it:free`）
-- `GEMINI_API_KEY` Gemini 利用時のみ
-- `OPENROUTER_API_KEY` OpenRouter 利用時のみ
+- `LLM_PROVIDER` 任意。`ollama` / `gemini` / `openrouter`。未指定時は `ollama`
+- `OLLAMA_LLM_MODEL` 任意。Ollama 利用時のモデル名。未指定時は `qwen2.5:3b-instruct`
+- `GEMINI_LLM_MODEL` 任意。Gemini 利用時のモデル名。未指定時は `gemini-2.5-flash-lite`
+- `OPENROUTER_LLM_MODEL` 任意。OpenRouter 利用時のモデル名。未指定時は `google/gemma-3-27b-it:free`
+- `GEMINI_API_KEY` 条件付き必須。Gemini 利用時のみ必要
+- `OPENROUTER_API_KEY` 条件付き必須。OpenRouter 利用時のみ必要
 
 STT(openai-whisper):
-- `OPENAI_WHISPER_PERSISTENT` `1`/`0`（常駐ワーカーの有効化）
-- `OPENAI_WHISPER_WORKERS` 常駐ワーカー数
-- `OPENAI_WHISPER_BIN` CLI パス（常駐無効時）
-- `OPENAI_WHISPER_UV_BIN` `uv` のパス
-- `OPENAI_WHISPER_UV_PROJECT` `tools/openai-whisper` のパス
-- `OPENAI_WHISPER_ARGS` 追加引数
-- `OPENAI_WHISPER_TIMEOUT_SEC` タイムアウト秒
-- `OPENAI_WHISPER_DEBUG` `1` で詳細ログ
-
-その他:
-- `PERMITTED_USERS` 現状未使用（将来の運用ガード候補）
+- `OPENAI_WHISPER_PERSISTENT` 任意。`1` / `0`。未指定時は有効
+- `OPENAI_WHISPER_WORKERS` 任意。常駐ワーカー数。未指定時は `1`
+- `OPENAI_WHISPER_BIN` 条件付き任意。常駐ワーカーを使わない場合の CLI パス
+- `OPENAI_WHISPER_UV_BIN` 任意。`uv` 実行ファイルのパス
+- `OPENAI_WHISPER_UV_PROJECT` 任意。`tools/openai-whisper` 以外を使う場合のプロジェクトパス
+- `OPENAI_WHISPER_ARGS` 任意。追加引数
+- `OPENAI_WHISPER_TIMEOUT_SEC` 任意。タイムアウト秒
+- `OPENAI_WHISPER_DEBUG` 任意。`1` で詳細ログ
 
 ※ `.env.example` も参照してください。
 
