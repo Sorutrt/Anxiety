@@ -57,6 +57,17 @@ export class SpeechIndicatorState {
     return this.silenceDeadline;
   }
 
+  getTotalOnMs(atMs: number): number {
+    if (this.indicatorOnAt === null) {
+      return this.totalOnMs;
+    }
+    return this.totalOnMs + Math.max(0, atMs - this.indicatorOnAt);
+  }
+
+  isIndicatorOn(): boolean {
+    return this.indicatorOnAt !== null;
+  }
+
   shouldEnd(atMs: number): boolean {
     if (this.completed || this.silenceDeadline === null) {
       return false;
@@ -68,11 +79,8 @@ export class SpeechIndicatorState {
     if (this.completed) {
       return this.completed;
     }
-    if (this.indicatorOnAt !== null) {
-      const duration = Math.max(0, atMs - this.indicatorOnAt);
-      this.totalOnMs += duration;
-      this.indicatorOnAt = null;
-    }
+    this.totalOnMs = this.getTotalOnMs(atMs);
+    this.indicatorOnAt = null;
     this.silenceDeadline = null;
     const isValid = this.totalOnMs > this.minOnMs;
     this.completed = { totalOnMs: this.totalOnMs, isValid };

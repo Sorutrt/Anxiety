@@ -30,6 +30,7 @@ import {
   MAX_UTTERANCE_SEC,
   MIN_UTTERANCE_MS,
   MULTI_MEMBER_NOTICE_TEXT,
+  PLAYBACK_BARGE_IN_MIN_MS,
   SPEECH_GAP_MS,
   SPEECH_INDICATOR_MIN_MS,
   STT_FALLBACK_TEXT,
@@ -44,6 +45,10 @@ import { generateReply } from "../llm";
 import { ensureOllamaRunning, stopOllamaServer } from "../llm/ollamaManager";
 import { transcribeAudio } from "../stt/moonshineVoice";
 import { retryOnce, withTimeout } from "../utils/async";
+import {
+  getPlaybackBargeInDelayMs,
+  hasReachedPlaybackBargeInThreshold,
+} from "./playbackBargeIn";
 import { SpeechIndicatorState } from "./speechIndicatorState";
 import { normalizeSttText } from "./sttText";
 import {
@@ -73,8 +78,10 @@ type ActiveUtterance = {
   userId: string;
   utteranceId: string;
   silenceTimer?: ReturnType<typeof setTimeout>;
+  playbackInterruptionTimer?: ReturnType<typeof setTimeout>;
   indicatorState: SpeechIndicatorState;
   indicatorResult?: SpeechIndicatorResult;
+  mode: "normal" | "playback-barge-in";
   recording: RecordingContext;
 };
 const activeUtterances = new Map<string, ActiveUtterance>();
@@ -90,6 +97,9 @@ type TextQueueItem = {
   userId: string;
   text: string;
   createdAt: number;
+};
+type StartRecordingOptions = {
+  allowSessionMismatch?: boolean;
 };
 
 // Opus実装の種類を1回だけログして、フォールバック時の原因調査を容易にする。
@@ -152,6 +162,11 @@ export function getOrCreateAudioPlayer(guildId: string): AudioPlayer {
 
 export function getAudioPlayer(guildId: string): AudioPlayer | undefined {
   return audioPlayers.get(guildId);
+}
+
+function isPlaybackInProgress(guildId: string): boolean {
+  const player = getAudioPlayer(guildId);
+  return player !== undefined && player.state.status !== AudioPlayerStatus.Idle;
 }
 
 export async function joinVoiceChannelFromInteraction(
@@ -570,7 +585,7 @@ async function processTextQueueItem(
     await speakText(client, item.guildId, connection, reply);
     return "processed";
   } finally {
-    resetSessionAfterTurn(item.guildId);
+    resetSessionAfterTurn(item.guildId, undefined);
   }
 }
 
@@ -586,6 +601,11 @@ async function handleSpeechStart(
     return;
   }
 
+  if (userId === client.user?.id) {
+    console.log(`[VOICE] start ignored: self guild=${guildId} user=${userId}`);
+    return;
+  }
+
   const active = activeUtterances.get(guildId);
   if (active) {
     if (active.userId !== userId) {
@@ -598,19 +618,20 @@ async function handleSpeechStart(
       clearTimeout(active.silenceTimer);
       active.silenceTimer = undefined;
     }
-    active.indicatorState.onIndicatorOn(Date.now());
+    const now = Date.now();
+    active.indicatorState.onIndicatorOn(now);
+    if (active.mode === "playback-barge-in") {
+      schedulePlaybackBargeIn(client, guildId, active.utteranceId, userId, now);
+    }
     return;
   }
 
-  if (session.state !== "IDLE") {
+  const playbackBargeInEnabled =
+    session.state === "SPEAKING" || isPlaybackInProgress(guildId);
+  if (session.state !== "IDLE" && !playbackBargeInEnabled) {
     console.log(
       `[VOICE] start ignored: session busy guild=${guildId} user=${userId} state=${session.state}`
     );
-    return;
-  }
-
-  if (userId === client.user?.id) {
-    console.log(`[VOICE] start ignored: self guild=${guildId} user=${userId}`);
     return;
   }
 
@@ -623,23 +644,29 @@ async function handleSpeechStart(
     : session.voiceChannelId;
   const now = Date.now();
   const utteranceId = `${userId}-${now}`;
-  updateVoiceSession(guildId, (current) => ({
-    ...current,
-    voiceChannelId: voiceChannel,
-    pendingNoticeSent: false,
-    state: "LISTENING",
-    currentSpeakerId: userId,
-    currentUtteranceId: utteranceId,
-  }));
-
-  const recording = startRecording(client, guildId, userId, utteranceId, connection);
-  if (!recording) {
+  if (!playbackBargeInEnabled) {
     updateVoiceSession(guildId, (current) => ({
       ...current,
-      state: "IDLE",
-      currentSpeakerId: undefined,
-      currentUtteranceId: undefined,
+      voiceChannelId: voiceChannel,
+      pendingNoticeSent: false,
+      state: "LISTENING",
+      currentSpeakerId: userId,
+      currentUtteranceId: utteranceId,
     }));
+  }
+
+  const recording = startRecording(client, guildId, userId, utteranceId, connection, {
+    allowSessionMismatch: playbackBargeInEnabled,
+  });
+  if (!recording) {
+    if (!playbackBargeInEnabled) {
+      updateVoiceSession(guildId, (current) => ({
+        ...current,
+        state: "IDLE",
+        currentSpeakerId: undefined,
+        currentUtteranceId: undefined,
+      }));
+    }
     return;
   }
   const indicatorState = new SpeechIndicatorState({
@@ -651,24 +678,102 @@ async function handleSpeechStart(
     userId,
     utteranceId,
     indicatorState,
+    mode: playbackBargeInEnabled ? "playback-barge-in" : "normal",
     recording,
   });
-  void logDebug(client, guildId, 1, `[STATE] IDLE -> LISTENING`);
+  if (playbackBargeInEnabled) {
+    schedulePlaybackBargeIn(client, guildId, utteranceId, userId, now);
+  } else {
+    void logDebug(client, guildId, 1, `[STATE] IDLE -> LISTENING`);
+  }
 
   const member = await memberPromise;
   if (member?.bot) {
     const current = getVoiceSession(guildId);
-    if (current.currentUtteranceId !== utteranceId) {
-      return;
+    if (current.currentUtteranceId === utteranceId) {
+      updateVoiceSession(guildId, (current) => ({
+        ...current,
+        state: "IDLE",
+        currentSpeakerId: undefined,
+        currentUtteranceId: undefined,
+      }));
     }
-    updateVoiceSession(guildId, (current) => ({
-      ...current,
-      state: "IDLE",
-      currentSpeakerId: undefined,
-      currentUtteranceId: undefined,
-    }));
     stopActiveUtterance(guildId, utteranceId);
   }
+}
+
+// 発話中の合計点灯時間が閾値に達したら再生を止めて聞き取りへ遷移する。
+function schedulePlaybackBargeIn(
+  client: Client,
+  guildId: string,
+  utteranceId: string,
+  userId: string,
+  now = Date.now()
+): void {
+  const active = activeUtterances.get(guildId);
+  if (
+    !active ||
+    active.utteranceId !== utteranceId ||
+    active.userId !== userId ||
+    active.mode !== "playback-barge-in"
+  ) {
+    return;
+  }
+  if (active.playbackInterruptionTimer) {
+    clearTimeout(active.playbackInterruptionTimer);
+    active.playbackInterruptionTimer = undefined;
+  }
+  const delayMs = getPlaybackBargeInDelayMs(
+    active.indicatorState,
+    now,
+    PLAYBACK_BARGE_IN_MIN_MS
+  );
+  if (delayMs === null) {
+    return;
+  }
+  active.playbackInterruptionTimer = setTimeout(() => {
+    confirmPlaybackBargeIn(client, guildId, utteranceId, userId);
+  }, delayMs);
+}
+
+function confirmPlaybackBargeIn(
+  client: Client,
+  guildId: string,
+  utteranceId: string,
+  userId: string
+): void {
+  const active = activeUtterances.get(guildId);
+  if (
+    !active ||
+    active.utteranceId !== utteranceId ||
+    active.userId !== userId ||
+    active.mode !== "playback-barge-in"
+  ) {
+    return;
+  }
+  const now = Date.now();
+  if (
+    !hasReachedPlaybackBargeInThreshold(
+      active.indicatorState,
+      now,
+      PLAYBACK_BARGE_IN_MIN_MS
+    )
+  ) {
+    return;
+  }
+  if (active.playbackInterruptionTimer) {
+    clearTimeout(active.playbackInterruptionTimer);
+    active.playbackInterruptionTimer = undefined;
+  }
+  active.mode = "normal";
+  stopPlayback(guildId);
+  updateVoiceSession(guildId, (current) => ({
+    ...current,
+    state: "LISTENING",
+    currentSpeakerId: userId,
+    currentUtteranceId: utteranceId,
+  }));
+  void logDebug(client, guildId, 1, `[STATE] PLAYBACK -> LISTENING`);
 }
 
 // 緑ランプの消灯で無音判定を進め、発話の区切りタイマーを更新する。
@@ -680,6 +785,10 @@ function handleSpeechEnd(guildId: string, userId: string): void {
 
   if (active.silenceTimer) {
     clearTimeout(active.silenceTimer);
+  }
+  if (active.playbackInterruptionTimer) {
+    clearTimeout(active.playbackInterruptionTimer);
+    active.playbackInterruptionTimer = undefined;
   }
   const now = Date.now();
   const silenceDeadline = active.indicatorState.onIndicatorOff(now);
@@ -717,6 +826,10 @@ function stopActiveUtterance(guildId: string, utteranceId?: string, endedAt?: nu
     clearTimeout(active.silenceTimer);
     active.silenceTimer = undefined;
   }
+  if (active.playbackInterruptionTimer) {
+    clearTimeout(active.playbackInterruptionTimer);
+    active.playbackInterruptionTimer = undefined;
+  }
   active.indicatorResult = active.indicatorState.complete(endedAt ?? Date.now());
   if (!active.recording.finished) {
     // 手動終了時にデコーダを確実に閉じて finalize を発火させる。
@@ -738,6 +851,9 @@ function clearActiveUtterance(guildId: string, utteranceId?: string): void {
   if (active.silenceTimer) {
     clearTimeout(active.silenceTimer);
   }
+  if (active.playbackInterruptionTimer) {
+    clearTimeout(active.playbackInterruptionTimer);
+  }
   activeUtterances.delete(guildId);
 }
 
@@ -747,10 +863,11 @@ function startRecording(
   guildId: string,
   userId: string,
   utteranceId: string,
-  connection: VoiceConnection
+  connection: VoiceConnection,
+  options: StartRecordingOptions = {}
 ): RecordingContext | null {
   const session = getVoiceSession(guildId);
-  if (session.currentUtteranceId !== utteranceId) {
+  if (!options.allowSessionMismatch && session.currentUtteranceId !== utteranceId) {
     return null;
   }
 
@@ -799,12 +916,15 @@ function startRecording(
     decoder.destroy();
     receiverStream.destroy();
     console.error(message, error);
-    updateVoiceSession(guildId, (current) => ({
-      ...current,
-      state: "IDLE",
-      currentSpeakerId: undefined,
-      currentUtteranceId: undefined,
-    }));
+    const current = getVoiceSession(guildId);
+    if (current.currentUtteranceId === utteranceId) {
+      updateVoiceSession(guildId, (current) => ({
+        ...current,
+        state: "IDLE",
+        currentSpeakerId: undefined,
+        currentUtteranceId: undefined,
+      }));
+    }
     clearActiveUtterance(guildId, utteranceId);
   };
 
@@ -878,6 +998,9 @@ async function finalizeRecording(
     return;
   }
 
+  // 録音済みの発話はここでアクティブ管理から外し、STT/LLM/TTS 中の割り込みを受け付ける。
+  clearActiveUtterance(guildId, utteranceId);
+
   updateVoiceSession(guildId, (current) => ({
     ...current,
     state: "TRANSCRIBING",
@@ -894,7 +1017,6 @@ async function finalizeRecording(
     await processUtterance(client, guildId, wavPath, utteranceId);
   } finally {
     await fs.promises.unlink(wavPath).catch(() => undefined);
-    clearActiveUtterance(guildId, utteranceId);
   }
 }
 
@@ -951,18 +1073,18 @@ async function processUtterance(
 
   if (sttFailed) {
     await speakFallback(client, guildId, STT_FALLBACK_TEXT);
-    resetSessionAfterTurn(guildId);
+    resetSessionAfterTurn(guildId, utteranceId);
     return;
   }
 
   if (text === null) {
-    resetSessionAfterTurn(guildId);
+    resetSessionAfterTurn(guildId, utteranceId);
     return;
   }
 
   const userText = text;
   if (!isSessionActive(guildId, utteranceId)) {
-    resetSessionAfterTurn(guildId);
+    resetSessionAfterTurn(guildId, utteranceId);
     return;
   }
 
@@ -987,7 +1109,7 @@ async function processUtterance(
   const llmTime = Date.now() - llmStart;
   if (!reply) {
     await speakFallback(client, guildId, GENERAL_FALLBACK_TEXT);
-    resetSessionAfterTurn(guildId);
+    resetSessionAfterTurn(guildId, utteranceId);
     return;
   }
   const replyText = reply;
@@ -995,7 +1117,7 @@ async function processUtterance(
   await logDebug(client, guildId, 2, `[LLM] time=${llmTime}ms`);
 
   if (!isSessionActive(guildId, utteranceId)) {
-    resetSessionAfterTurn(guildId);
+    resetSessionAfterTurn(guildId, utteranceId);
     return;
   }
 
@@ -1014,13 +1136,13 @@ async function processUtterance(
 
   const connection = getVoiceConnection(guildId);
   if (!connection) {
-    resetSessionAfterTurn(guildId);
+    resetSessionAfterTurn(guildId, utteranceId);
     return;
   }
 
   await speakText(client, guildId, connection, replyText);
   console.log(`[PIPELINE] STT=done LLM=done TTS=done`);
-  resetSessionAfterTurn(guildId);
+  resetSessionAfterTurn(guildId, utteranceId);
 }
 
 async function generateReplyFromLlm(guildId: string, userText: string): Promise<string | null> {
@@ -1094,6 +1216,7 @@ async function speakText(
 ): Promise<void> {
   const characters = getCharacters();
   const session = getVoiceSession(guildId);
+  const expectedUtteranceId = session.currentUtteranceId;
   const character =
     characters.find((item) => item.id === session.characterId) ?? characters[0];
   if (!character) {
@@ -1119,6 +1242,10 @@ async function speakText(
 
   const wavFile = findLatestWavFileAfter(voiceDir, ttsStart);
   if (!wavFile) {
+    return;
+  }
+  if (getVoiceSession(guildId).currentUtteranceId !== expectedUtteranceId) {
+    await deleteGeneratedFiles(wavFile);
     return;
   }
   try {
@@ -1243,13 +1370,18 @@ async function logDebug(
   }
 }
 
-function resetSessionAfterTurn(guildId: string): void {
-  updateVoiceSession(guildId, (session) => ({
-    ...session,
-    state: "IDLE",
-    currentSpeakerId: undefined,
-    currentUtteranceId: undefined,
-  }));
+function resetSessionAfterTurn(guildId: string, expectedUtteranceId: string | undefined): void {
+  updateVoiceSession(guildId, (session) => {
+    if (session.currentUtteranceId !== expectedUtteranceId) {
+      return session;
+    }
+    return {
+      ...session,
+      state: "IDLE",
+      currentSpeakerId: undefined,
+      currentUtteranceId: undefined,
+    };
+  });
 }
 
 function isSessionActive(guildId: string, utteranceId: string): boolean {

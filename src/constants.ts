@@ -1,5 +1,7 @@
 // 緑ランプの合計点灯時間がこの値以下なら発話として扱わない。
 export const SPEECH_INDICATOR_MIN_MS = 800;
+// 再生中の音声を中断して聞き取りへ切り替える最小発話時間。
+export const PLAYBACK_BARGE_IN_MIN_MS = 300;
 // 消灯後、この時間以内の再点灯は同一発話として扱う。
 export const SPEECH_GAP_MS = 500;
 // 録音が長引いたときに強制終了する最大秒数。
