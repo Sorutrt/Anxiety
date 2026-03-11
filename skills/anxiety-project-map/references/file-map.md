@@ -6,6 +6,8 @@
 - `src/state.ts`: ギルド設定・セッション管理
 - `src/types.ts`: 主要な型定義
 - `src/constants.ts`: タイムアウトや閾値
+- `src/voice/playbackBargeIn.ts`: VC 割り込み停止の 300ms 判定
+- `src/voice/speechIndicatorState.ts`: 発話境界と点灯時間の集計
 
 ## STT (Speech to Text)
 

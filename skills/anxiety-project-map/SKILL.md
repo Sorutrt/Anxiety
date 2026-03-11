@@ -1,6 +1,6 @@
 ---
 name: anxiety-project-map
-description: このリポジトリで機能追加・修正を行う際に、どのファイルを触るべきかを素早く特定し、STT→LLM→A.I.VOICE のデータフロー/プロトコルを確認するためのガイド。STT/LLM/TTS、コマンド追加、デプロイ登録、設定やキャラクター定義を触るときに使う。
+description: このリポジトリで機能追加・修正を行う際に、どのファイルを触るべきかを素早く特定し、STT→LLM→A.I.VOICE のデータフロー/プロトコルを確認するためのガイド。STT/LLM/TTS、Discord VC の発話割り込み（barge-in）やターンテイキング、コマンド追加、デプロイ登録、設定やキャラクター定義を触るときに使う。
 ---
 
 # Anxiety Project Map
@@ -13,9 +13,11 @@ description: このリポジトリで機能追加・修正を行う際に、ど�
 
 - 目的の機能に対応するファイルを探すときは `references/file-map.md` を参照する。
 - STT→LLM→A.I.VOICE の流れや状態遷移を確認したいときは `references/protocols.md` を参照する。
+- Discord VC の割り込み停止や `SPEAKING`/再生状態の差、`activeUtterances` の寿命を確認したいときは `references/voice-barge-in.md` を参照する。
 - openai-whisper の詳細変更は既存の `skills/openai-whisper/` を優先して参照する。
 
 ## 参照ファイル
 
 - `references/file-map.md`: 機能とファイルの対応表（どこを触るか）
 - `references/protocols.md`: STT→LLM→A.I.VOICE のプロトコルと状態遷移
+- `references/voice-barge-in.md`: Discord VC の割り込み停止と状態管理の注意点

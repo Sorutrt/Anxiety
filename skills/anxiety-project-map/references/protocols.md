@@ -22,6 +22,14 @@
 
 - `IDLE → LISTENING → TRANSCRIBING → THINKING → SPEAKING → IDLE`
 
+## Discord VC の barge-in
+
+1. Bot 応答ターン中でも、ユーザーの `speaking start` を受けたら provisional に録音を開始する。
+2. ユーザー発話の点灯時間が `PLAYBACK_BARGE_IN_MIN_MS` 以上になったら Bot の再生を止める。
+3. 割り込み成立後は `VoiceSession` を `LISTENING` に切り替え、新しい `currentUtteranceId` を採番する。
+4. 録音終了後は `activeUtterances` を解放し、STT/LLM/TTS 中の次発話を新規ターンとして受け付ける。
+5. 古い応答ターンの TTS が後から完了しても、`currentUtteranceId` が変わっていれば再生しない。
+
 ## エラー/タイムアウトの扱い
 
 - STT/LLM/TTS は `retryOnce` や `withTimeout` で再試行・タイムアウト制御する。
