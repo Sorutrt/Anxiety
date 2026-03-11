@@ -73,6 +73,9 @@ async function callOpenRouter(args: GenerateReplyArgs, timeoutMs: number): Promi
     temperature: params.temperature,
     max_tokens: params.max_tokens,
   };
+  console.info(
+    `[LLM] OpenRouter request guild=${args.guildId} model=${args.model} historyCount=${args.history.length} userTextLength=${args.userText.length}`
+  );
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

@@ -10,6 +10,10 @@ type ParsedLlmConfig = {
   model: string;
 };
 
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 // OpenRouter失敗時のGeminiフォールバックモデルを解決する。
 function resolveGeminiFallbackModel(): string {
   const raw = process.env.GEMINI_LLM_MODEL?.trim();
@@ -45,6 +49,9 @@ export async function generateReply(args: GenerateReplyArgs): Promise<string> {
       return await generateOpenRouterReply(providerArgs);
     } catch (error) {
       const fallbackModel = resolveGeminiFallbackModel();
+      console.warn(
+        `[LLM] OpenRouter failed; falling back to Gemini guild=${args.guildId} openrouterModel=${parsed.model} geminiModel=${fallbackModel} reason=${formatErrorMessage(error)}`
+      );
       return await generateGeminiReply({ ...args, model: fallbackModel });
     }
   }

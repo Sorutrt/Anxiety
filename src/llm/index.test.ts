@@ -4,6 +4,8 @@ import { generateReply } from "./index";
 import type { CharacterDefinition } from "../types";
 
 const originalFetch = globalThis.fetch;
+const originalConsoleInfo = console.info;
+const originalConsoleWarn = console.warn;
 
 const baseCharacter: CharacterDefinition = {
   id: "test",
@@ -16,16 +18,26 @@ const baseCharacter: CharacterDefinition = {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  console.info = originalConsoleInfo;
+  console.warn = originalConsoleWarn;
 });
 
 test("OpenRouter失敗時にGeminiへフォールバックする", async () => {
   const originalGeminiModel = process.env.GEMINI_LLM_MODEL;
   const originalGeminiKey = process.env.GEMINI_API_KEY;
   const originalOpenRouterKey = process.env.OPENROUTER_API_KEY;
+  const infoLogs: string[] = [];
+  const warnLogs: string[] = [];
 
   process.env.GEMINI_LLM_MODEL = "gemini-2.5-flash-lite";
   process.env.GEMINI_API_KEY = "dummy";
   process.env.OPENROUTER_API_KEY = "dummy";
+  console.info = (message?: unknown, ...optionalParams: unknown[]) => {
+    infoLogs.push([message, ...optionalParams].map(String).join(" "));
+  };
+  console.warn = (message?: unknown, ...optionalParams: unknown[]) => {
+    warnLogs.push([message, ...optionalParams].map(String).join(" "));
+  };
 
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url =
@@ -65,6 +77,18 @@ test("OpenRouter失敗時にGeminiへフォールバックする", async () => {
       userText: "こんにちは",
     });
     assert.equal(reply, "gemini-ok");
+    assert.equal(
+      infoLogs.some((message) =>
+        message.includes("[LLM] OpenRouter request guild=guild model=google/gemma-3-27b-it:free")
+      ),
+      true
+    );
+    assert.equal(
+      warnLogs.some((message) =>
+        message.includes("[LLM] OpenRouter failed; falling back to Gemini")
+      ),
+      true
+    );
   } finally {
     process.env.GEMINI_LLM_MODEL = originalGeminiModel;
     process.env.GEMINI_API_KEY = originalGeminiKey;
