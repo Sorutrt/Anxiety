@@ -49,6 +49,7 @@ export type CharacterDefinition = {
   displayName: string;
   systemPrompt: string;
   speakingStyle: string;
+  fillerPhrases: string[];
   openrouterParams?: {
     temperature?: number;
     max_tokens?: number;

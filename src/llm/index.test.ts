@@ -10,6 +10,7 @@ const baseCharacter: CharacterDefinition = {
   displayName: "テスト",
   systemPrompt: "テスト用システム",
   speakingStyle: "短く答える。",
+  fillerPhrases: ["えっと"],
   voicePreset: "auto",
 };
 

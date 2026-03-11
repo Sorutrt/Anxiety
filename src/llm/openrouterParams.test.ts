@@ -11,6 +11,7 @@ function createCharacter(
     displayName: "test",
     systemPrompt: "",
     speakingStyle: "",
+    fillerPhrases: ["えっと"],
     voicePreset: "auto",
     ...overrides,
   };

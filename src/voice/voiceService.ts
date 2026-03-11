@@ -58,6 +58,7 @@ import {
   shiftTextQueue,
 } from "./textQueue";
 import type { TextQueueState } from "./textQueue";
+import { runThinkingFillerStep, selectThinkingFiller } from "./thinkingFiller";
 
 const audioPlayers = new Map<string, AudioPlayer>();
 const receiverInitialized = new Set<string>();
@@ -564,9 +565,12 @@ async function processTextQueueItem(
   });
 
   try {
-    const reply = await generateReplyFromLlm(item.guildId, item.text);
+    const reply = await generateReplyWithThinkingFiller(client, item.guildId, item.text);
     if (!reply) {
       await speakFallback(client, item.guildId, GENERAL_FALLBACK_TEXT);
+      return "processed";
+    }
+    if (!canSpeakQueuedReply(item.guildId)) {
       return "processed";
     }
 
@@ -1105,7 +1109,7 @@ async function processUtterance(
 
   const llmStart = Date.now();
   console.log(`[PIPELINE] STT=done LLM=running TTS=waiting`);
-  const reply = await generateReplyFromLlm(guildId, userText);
+  const reply = await generateReplyWithThinkingFiller(client, guildId, userText, utteranceId);
   const llmTime = Date.now() - llmStart;
   if (!reply) {
     await speakFallback(client, guildId, GENERAL_FALLBACK_TEXT);
@@ -1145,17 +1149,61 @@ async function processUtterance(
   resetSessionAfterTurn(guildId, utteranceId);
 }
 
-async function generateReplyFromLlm(guildId: string, userText: string): Promise<string | null> {
+function getCharacterForGuild(guildId: string) {
   const characters = getCharacters();
   const session = getVoiceSession(guildId);
-  const character =
-    characters.find((item) => item.id === session.characterId) ?? characters[0];
+  return characters.find((item) => item.id === session.characterId) ?? characters[0] ?? null;
+}
+
+function canSpeakQueuedReply(guildId: string): boolean {
+  const session = getVoiceSession(guildId);
+  return (
+    session.isVcModeRunning &&
+    session.state === "THINKING" &&
+    session.currentUtteranceId === undefined
+  );
+}
+
+// THINKING中はフィラー再生とLLM生成を並行で進め、返答確定後に本編へ繋ぐ。
+async function generateReplyWithThinkingFiller(
+  client: Client,
+  guildId: string,
+  userText: string,
+  utteranceId?: string
+): Promise<string | null> {
+  const character = getCharacterForGuild(guildId);
+  if (!character) {
+    return null;
+  }
+
+  const fillerText = selectThinkingFiller(character.fillerPhrases, Date.now());
+  return await runThinkingFillerStep({
+    fillerText,
+    playFiller: async (text) => {
+      const connection = getVoiceConnection(guildId);
+      if (!connection) {
+        return;
+      }
+      if (utteranceId && !isSessionActive(guildId, utteranceId)) {
+        return;
+      }
+      await speakText(client, guildId, connection, text);
+    },
+    generateReply: async () => generateReplyFromLlm(guildId, userText, character),
+  });
+}
+
+async function generateReplyFromLlm(
+  guildId: string,
+  userText: string,
+  character = getCharacterForGuild(guildId)
+): Promise<string | null> {
   if (!character) {
     return null;
   }
 
   const config = getGuildConfig(guildId);
-  const history = session.history.slice(-CONTEXT_TURNS * 2);
+  const history = getVoiceSession(guildId).history.slice(-CONTEXT_TURNS * 2);
 
   try {
     const reply = await generateReply({
