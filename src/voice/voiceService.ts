@@ -2,6 +2,7 @@ import {
   AudioPlayer,
   AudioPlayerStatus,
   EndBehaviorType,
+  StreamType,
   VoiceConnection,
   VoiceConnectionStatus,
   createAudioPlayer,
@@ -49,6 +50,10 @@ import {
   getPlaybackBargeInDelayMs,
   hasReachedPlaybackBargeInThreshold,
 } from "./playbackBargeIn";
+import {
+  createInterruptedPlayback,
+  shouldResumeInterruptedPlayback,
+} from "./interruptedPlaybackPolicy";
 import { SpeechIndicatorState } from "./speechIndicatorState";
 import { normalizeSttText } from "./sttText";
 import {
@@ -102,6 +107,27 @@ type TextQueueItem = {
 type StartRecordingOptions = {
   allowSessionMismatch?: boolean;
 };
+type ActivePlayback = {
+  filePath: string;
+  resumable: boolean;
+  interruptedByBargeIn: boolean;
+};
+type PlayAudioFileOptions = {
+  resumable?: boolean;
+  startOffsetMs?: number;
+};
+type PlayAudioFileResult = "completed" | "interrupted";
+type SpeakTextOptions = {
+  resumeOnEmptyStt?: boolean;
+};
+const activePlaybacks = new Map<string, ActivePlayback>();
+const interruptedPlaybacks = new Map<
+  string,
+  {
+    filePath: string;
+    offsetMs: number;
+  }
+>();
 
 // Opus実装の種類を1回だけログして、フォールバック時の原因調査を容易にする。
 function logOpusModuleType(): void {
@@ -283,6 +309,7 @@ export async function leaveVoiceChannel(
   }));
   clearTextQueue(guildId);
   stopActiveUtterance(guildId);
+  await discardInterruptedPlayback(guildId);
   connection.destroy();
   receiverInitialized.delete(guildId);
   await stopOllamaServer();
@@ -304,6 +331,7 @@ export async function skipPlayback(interaction: ChatInputCommandInteraction): Pr
   }
 
   player.stop(true);
+  await discardInterruptedPlayback(guildId);
   updateVoiceSession(guildId, (session) => ({
     ...session,
     state: "IDLE",
@@ -454,6 +482,7 @@ async function stopForMultiMember(
   clearTextQueue(guildId);
   stopActiveUtterance(guildId);
   stopPlayback(guildId);
+  await discardInterruptedPlayback(guildId);
   await logDebug(client, guildId, 1, `[GUARD] stop reason=MULTI_MEMBER nonBot=${nonBotMembers}`);
 
   if (config.debugLevel > 0) {
@@ -552,6 +581,8 @@ async function processTextQueueItem(
     return "drop";
   }
 
+  await discardInterruptedPlayback(item.guildId);
+
   updateVoiceSession(item.guildId, (current) => {
     const userHistory: ConversationTurn[] = [
       ...current.history,
@@ -586,7 +617,9 @@ async function processTextQueueItem(
       };
     });
 
-    await speakText(client, item.guildId, connection, reply);
+    await speakText(client, item.guildId, connection, reply, {
+      resumeOnEmptyStt: true,
+    });
     return "processed";
   } finally {
     resetSessionAfterTurn(item.guildId, undefined);
@@ -770,7 +803,7 @@ function confirmPlaybackBargeIn(
     active.playbackInterruptionTimer = undefined;
   }
   active.mode = "normal";
-  stopPlayback(guildId);
+  stopPlayback(guildId, "barge-in");
   updateVoiceSession(guildId, (current) => ({
     ...current,
     state: "LISTENING",
@@ -1076,17 +1109,22 @@ async function processUtterance(
   const sttTime = Date.now() - sttStart;
 
   if (sttFailed) {
+    await discardInterruptedPlayback(guildId);
     await speakFallback(client, guildId, STT_FALLBACK_TEXT);
     resetSessionAfterTurn(guildId, utteranceId);
     return;
   }
 
-  if (text === null) {
-    resetSessionAfterTurn(guildId, utteranceId);
+  if (shouldResumeInterruptedPlayback(text)) {
+    const resumed = await resumeInterruptedPlayback(client, guildId);
+    if (!resumed) {
+      resetSessionAfterTurn(guildId, utteranceId);
+    }
     return;
   }
 
   const userText = text;
+  await discardInterruptedPlayback(guildId);
   if (!isSessionActive(guildId, utteranceId)) {
     resetSessionAfterTurn(guildId, utteranceId);
     return;
@@ -1144,7 +1182,9 @@ async function processUtterance(
     return;
   }
 
-  await speakText(client, guildId, connection, replyText);
+  await speakText(client, guildId, connection, replyText, {
+    resumeOnEmptyStt: true,
+  });
   console.log(`[PIPELINE] STT=done LLM=done TTS=done`);
   resetSessionAfterTurn(guildId, utteranceId);
 }
@@ -1187,7 +1227,9 @@ async function generateReplyWithThinkingFiller(
       if (utteranceId && !isSessionActive(guildId, utteranceId)) {
         return;
       }
-      await speakText(client, guildId, connection, text);
+      await speakText(client, guildId, connection, text, {
+        resumeOnEmptyStt: true,
+      });
     },
     generateReply: async () => generateReplyFromLlm(guildId, userText, character),
   });
@@ -1253,14 +1295,17 @@ async function speakFallback(client: Client, guildId: string, text: string): Pro
     return;
   }
 
-  await speakText(client, guildId, connection, text);
+  await speakText(client, guildId, connection, text, {
+    resumeOnEmptyStt: true,
+  });
 }
 
 async function speakText(
   client: Client,
   guildId: string,
   connection: VoiceConnection,
-  text: string
+  text: string,
+  options: SpeakTextOptions = {}
 ): Promise<void> {
   const characters = getCharacters();
   const session = getVoiceSession(guildId);
@@ -1296,13 +1341,18 @@ async function speakText(
     await deleteGeneratedFiles(wavFile);
     return;
   }
+  let result: PlayAudioFileResult = "completed";
   try {
     await logDebug(client, guildId, 1, `[PLAY] start`);
-    await playAudioFileForGuild(guildId, connection, wavFile);
+    result = await playAudioFileForGuild(guildId, connection, wavFile, {
+      resumable: options.resumeOnEmptyStt ?? false,
+    });
   } catch (error) {
     console.error("音声再生エラー:", error);
   } finally {
-    await deleteGeneratedFiles(wavFile);
+    if (result !== "interrupted") {
+      await deleteGeneratedFiles(wavFile);
+    }
   }
   await logDebug(client, guildId, 1, `[PLAY] end`);
   await logDebug(client, guildId, 1, `[TTS] end`);
@@ -1340,18 +1390,103 @@ async function deleteGeneratedFiles(wavPath: string): Promise<void> {
   await fs.promises.unlink(txtPath).catch(() => undefined);
 }
 
+function createPlaybackResource(filePath: string, startOffsetMs = 0) {
+  if (startOffsetMs <= 0) {
+    return createAudioResource(filePath, { inlineVolume: true });
+  }
+  const ffmpeg = new prism.FFmpeg({
+    args: [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-ss",
+      (startOffsetMs / 1000).toFixed(3),
+      "-i",
+      filePath,
+      "-f",
+      "s16le",
+      "-ar",
+      "48000",
+      "-ac",
+      "2",
+      "pipe:1",
+    ],
+  });
+  return createAudioResource(ffmpeg, {
+    inlineVolume: true,
+    inputType: StreamType.Raw,
+  });
+}
+
+async function discardInterruptedPlayback(guildId: string): Promise<void> {
+  const interrupted = interruptedPlaybacks.get(guildId);
+  if (!interrupted) {
+    return;
+  }
+  interruptedPlaybacks.delete(guildId);
+  await deleteGeneratedFiles(interrupted.filePath);
+}
+
+async function resumeInterruptedPlayback(
+  client: Client,
+  guildId: string
+): Promise<boolean> {
+  const interrupted = interruptedPlaybacks.get(guildId);
+  if (!interrupted) {
+    return false;
+  }
+  interruptedPlaybacks.delete(guildId);
+  const connection = getVoiceConnection(guildId);
+  if (!connection) {
+    await deleteGeneratedFiles(interrupted.filePath);
+    return false;
+  }
+
+  updateVoiceSession(guildId, (current) => ({
+    ...current,
+    state: "SPEAKING",
+    currentSpeakerId: undefined,
+    currentUtteranceId: undefined,
+  }));
+
+  try {
+    await logDebug(client, guildId, 1, `[STATE] EMPTY_STT -> SPEAKING(resume)`);
+    const result = await playAudioFileForGuild(guildId, connection, interrupted.filePath, {
+      resumable: true,
+      startOffsetMs: interrupted.offsetMs,
+    });
+    if (result !== "interrupted") {
+      await deleteGeneratedFiles(interrupted.filePath);
+      resetSessionAfterTurn(guildId, undefined);
+    }
+    return true;
+  } catch (error) {
+    await deleteGeneratedFiles(interrupted.filePath);
+    resetSessionAfterTurn(guildId, undefined);
+    console.error("中断発話の再開に失敗しました:", error);
+    return false;
+  }
+}
+
 export async function playAudioFileForGuild(
   guildId: string,
   connection: VoiceConnection,
-  filePath: string
-): Promise<void> {
+  filePath: string,
+  options: PlayAudioFileOptions = {}
+): Promise<PlayAudioFileResult> {
   const player = getOrCreateAudioPlayer(guildId);
-  const resource = createAudioResource(filePath, { inlineVolume: true });
+  const resource = createPlaybackResource(filePath, options.startOffsetMs ?? 0);
+  const playback: ActivePlayback = {
+    filePath,
+    resumable: options.resumable ?? false,
+    interruptedByBargeIn: false,
+  };
+  activePlaybacks.set(guildId, playback);
 
   return new Promise((resolve, reject) => {
     const onIdle = () => {
       cleanup();
-      resolve();
+      resolve(playback.interruptedByBargeIn ? "interrupted" : "completed");
     };
     const onError = (error: Error) => {
       cleanup();
@@ -1360,6 +1495,9 @@ export async function playAudioFileForGuild(
     const cleanup = () => {
       player.removeListener(AudioPlayerStatus.Idle, onIdle);
       player.removeListener("error", onError);
+      if (activePlaybacks.get(guildId) === playback) {
+        activePlaybacks.delete(guildId);
+      }
     };
 
     player.once(AudioPlayerStatus.Idle, onIdle);
@@ -1369,8 +1507,26 @@ export async function playAudioFileForGuild(
   });
 }
 
-function stopPlayback(guildId: string): void {
+function stopPlayback(guildId: string, reason: "manual" | "barge-in" = "manual"): void {
   const player = audioPlayers.get(guildId);
+  if (reason === "barge-in" && player) {
+    const activePlayback = activePlaybacks.get(guildId);
+    if (
+      activePlayback &&
+      player.state.status !== AudioPlayerStatus.Idle &&
+      "resource" in player.state
+    ) {
+      const interrupted = createInterruptedPlayback(
+        activePlayback.filePath,
+        player.state.resource.playbackDuration,
+        activePlayback.resumable
+      );
+      if (interrupted) {
+        interruptedPlaybacks.set(guildId, interrupted);
+        activePlayback.interruptedByBargeIn = true;
+      }
+    }
+  }
   if (player) {
     player.stop(true);
   }
@@ -1393,7 +1549,9 @@ async function maybeSendDebugNotice(client: Client, guildId: string): Promise<vo
     return;
   }
 
-  await speakText(client, guildId, connection, DEBUG_NOTICE_TEXT);
+  await speakText(client, guildId, connection, DEBUG_NOTICE_TEXT, {
+    resumeOnEmptyStt: true,
+  });
 }
 
 async function logDebug(
