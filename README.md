@@ -1,18 +1,13 @@
 # ReadDiscordByA.I.VOICE
-DiscordのVCでユーザー音声を取り込み、STT→LLM→A.I.VOICEで返答音声を生成して再生するボットです。
-Windows + A.I.VOICE Editor 前提、1対1運用を想定しています。
+Discord の VC で A.I.VOICE のキャラと喋れる bot です。
+STT→LLM→A.I.VOICEで返答音声を生成して再生します。
+Windows + A.I.VOICE Editor 前提、ユーザーとボット 1 対 1 運用を想定しています。
 
 ## 仕様/関連ドキュメント
-- 仕様書: `SPEC.md`
 - キャラクター定義: `data/characters.json`
 
 ## キャラクター定義(characters.json)
-
-- `id`: 一意な識別子。/set character <id|name> や defaultCharacterId に使われます（小文字化して照合）。日本語も可。
-- `displayName`: 表示名。/set character の名前照合に使われます（小文字化して照合）。
-- `systemPrompt`: LLM のシステムプロンプト本文。
-- `speakingStyle`: 口調・話し方の指示。systemPrompt と連結されます。
-- `voicePreset`: A.I.VOICE のボイスプリセット名 or ボイス名。"auto" または空なら先頭のボイスにフォールバックします。
+`data/characters.json` でキャラクターの名前や性格を指定します。
 
 ```json
 [
@@ -26,6 +21,12 @@ Windows + A.I.VOICE Editor 前提、1対1運用を想定しています。
 ]
 ```
 
+- `id`: 一意な識別子。/set character <id|name> や defaultCharacterId に使われます（小文字化して照合）。日本語も可。
+- `displayName`: 表示名。/set character の名前照合に使われます（小文字化して照合）。
+- `systemPrompt`: LLM のシステムプロンプト本文。
+- `speakingStyle`: 口調・話し方の指示。systemPrompt と連結されます。
+- `voicePreset`: A.I.VOICE のボイスプリセット名 or ボイス名。"auto" または空なら先頭のボイスにフォールバックします。
+
 ## 現在の実装状況（コードベース）
 - [x] VC参加/退出、再生スキップ、履歴リセット
 - [x] VC音声受信と発話区切り（緑ランプベース）
@@ -37,14 +38,16 @@ Windows + A.I.VOICE Editor 前提、1対1運用を想定しています。
 - [ ] COOLDOWN状態の実運用
 - [ ] 設定の永続化（現在はメモリのみ）
 
-## 必要環境
-- Windows（A.I.VOICE Editor / winax）
+## Requipments
+- Windows
+- A.I.VOICE Editor
 - Node.js 22.12.0 以上（`@discordjs/voice` の DAVE 対応に必要、`mise` 推奨）
+- [winax](https://www.npmjs.com/package/winax) 
 - Python 3.12（`uv` 推奨）
 - Discord Bot のトークン
 
 ## セットアップ
-以降の手順は PowerShell 前提です。
+以降の手順は PowerShell 7 前提です。
 
 ### 0. 事前準備
 Node と Python を準備します。
@@ -106,9 +109,11 @@ node -e "const prism=require('prism-media'); new prism.opus.Decoder({rate:48000,
 
 ```
 copy .env.example .env
+notepad .env
 ```
 
 ### 4. Moonshine Voice の準備
+STT には Moonshine Voice を使います。
 `tools/moonshine-voice` で Python 依存を入れ、日本語モデルを取得します。
 
 ```
