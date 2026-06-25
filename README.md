@@ -43,14 +43,15 @@ Windows + A.I.VOICE Editor 前提、ユーザーとボット 1 対 1 運用を�
 - A.I.VOICE Editor
 - Node.js 22.12.0 以上（`@discordjs/voice` の DAVE 対応に必要、`mise` 推奨）
 - [winax](https://www.npmjs.com/package/winax) 
-- Python 3.12（`uv` 推奨）
+- uv（`mise` 推奨）
+- Python 3.12.12（`uv` 管理）
 - Discord Bot のトークン
 
 ## セットアップ
 以降の手順は PowerShell 7 前提です。
 
 ### 0. 事前準備
-Node と Python を準備します。
+Node と uv を `mise` で準備し、Python は `uv` で準備します。
 
 ```powershell
 mise install
@@ -87,22 +88,29 @@ Opus が `opusscript` にフォールバックすると「Invalid packet」が�
 1) Visual Studio Build Tools 2022 をインストール  
 ワークロード「C++ によるデスクトップ開発」を選択し、`MSVC v143` / `Windows SDK` / `MSBuild` を含めます。
 
-2) `mise` で Python を入れて、このコマンドだけで指定
+2) まず uv の Python 3.12.12 を、このコマンドだけで指定
 ```
-mise install python@3.11
-$py = "C:\Users\user\AppData\Local\mise\installs\python\3.11.14\python.exe"
+$py = (uv python find 3.12.12)
 $env:npm_config_python=$py
 npm rebuild @discordjs/opus
 Remove-Item Env:npm_config_python
 ```
 
-3) 動作確認（`@discordjs/opus` が出ること）
+3) 3.12.12 でビルドできない場合だけ、uv の Python 3.11 をフォールバックとして使う
+```
+uv python install 3.11
+$py = (uv python find 3.11)
+$env:npm_config_python=$py
+npm rebuild @discordjs/opus
+Remove-Item Env:npm_config_python
+```
+
+4) 動作確認（`@discordjs/opus` が出ること）
 ```
 node -e "const prism=require('prism-media'); new prism.opus.Decoder({rate:48000,channels:2,frameSize:960}); console.log(prism.opus.Decoder.type)"
 ```
 
-※ Python のパスは環境で変わるため適宜読み替えてください。  
-※ Python は `mise use` で常時有効にしなくてもOKです（tools/ 以下の Python と分離できます）。
+※ `@discordjs/opus` の Python は node-gyp のビルド時だけ使います。プロジェクト全体の Python は uv の 3.12.12 のままでOKです。
 
 ### 3. 環境変数
 `.env.example` をコピーして `.env` を作成し、必須項目と必要な条件付き項目を設定します。
